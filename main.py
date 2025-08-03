@@ -1,14 +1,13 @@
-# main.py
-
 import requests
 import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# Ambil token dari environment (Railway)
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Daftar pair
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ALLOWED_IDS = os.getenv("ALLOWED_IDS", "") 
+ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
+
 PAIRS = [
     "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT",
     "CRVUSDT", "ENSUSDT", "FORMUSDT", "TAOUSDT", "ALGOUSDT",
@@ -21,37 +20,31 @@ PAIRS = [
     "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
-# Ambil data RSI dari Binance (interval 1h)
+
 def get_rsi(symbol):
     try:
-        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit=100"
-        response = requests.get(url)
+        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}USDT&interval=1h&limit=100"
+        response = requests.get(url, timeout=10)
         data = response.json()
-
-        # Ambil harga penutupan
         closes = [float(entry[4]) for entry in data]
-
-        # Hitung RSI 14 secara manual
         deltas = [closes[i+1] - closes[i] for i in range(len(closes)-1)]
         gains = [delta if delta > 0 else 0 for delta in deltas]
         losses = [-delta if delta < 0 else 0 for delta in deltas]
-
         avg_gain = sum(gains[-14:]) / 14
         avg_loss = sum(losses[-14:]) / 14
         if avg_loss == 0:
             return 100.0
-
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         return round(rsi, 2)
     except:
         return None
 
-# Ambil data harga, volume, dll
+
 def get_pair_data(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-        res = requests.get(url)
+        res = requests.get(url, timeout=10)
         data = res.json()
         price = float(data['lastPrice'])
         change = float(data['priceChangePercent'])
@@ -60,8 +53,13 @@ def get_pair_data(symbol):
     except:
         return None, None, None
 
-# Handler perintah /scan
+
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("🚫 Maaf, kamu tidak diizinkan menggunakan bot ini.")
+        return
+
     await update.message.reply_text("🔍 Memindai data semua pair, tunggu sebentar...")
 
     jemput_bola = []
@@ -89,7 +87,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("✅ Tidak ada pair dengan RSI < 40 saat ini.")
 
-# Fungsi utama
+# Main
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("scan", scan))

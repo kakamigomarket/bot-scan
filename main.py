@@ -1,6 +1,5 @@
 import requests
 import os
-import numpy as np
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
@@ -20,17 +19,18 @@ PAIRS = [
     "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
+# Fungsi hitung RSI(6) dari Binance SPOT
 def get_rsi(symbol):
     try:
-        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}USDT&interval=1h&limit=100"
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}USDT&interval=1h&limit=100"
         response = requests.get(url, timeout=10)
         data = response.json()
         closes = [float(entry[4]) for entry in data]
         deltas = [closes[i+1] - closes[i] for i in range(len(closes)-1)]
         gains = [delta if delta > 0 else 0 for delta in deltas]
         losses = [-delta if delta < 0 else 0 for delta in deltas]
-        avg_gain = sum(gains[-14:]) / 14
-        avg_loss = sum(losses[-14:]) / 14
+        avg_gain = sum(gains[-6:]) / 6
+        avg_loss = sum(losses[-6:]) / 6
         if avg_loss == 0:
             return 100.0
         rs = avg_gain / avg_loss
@@ -39,6 +39,7 @@ def get_rsi(symbol):
     except:
         return None
 
+# Fungsi hitung EMA99 (manual tanpa numpy)
 def get_ema99(symbol):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit=100"
@@ -47,13 +48,15 @@ def get_ema99(symbol):
         closes = [float(entry[4]) for entry in data]
         if len(closes) < 99:
             return None
-        weights = np.exp(np.linspace(-1., 0., 99))
-        weights /= weights.sum()
-        ema = np.convolve(closes, weights, mode='valid')[-1]
+        ema = closes[0]
+        k = 2 / (99 + 1)
+        for price in closes[1:]:
+            ema = (price * k) + (ema * (1 - k))
         return round(ema, 4)
     except:
         return None
 
+# Ambil data harga, volume, change
 def get_pair_data(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
@@ -66,6 +69,7 @@ def get_pair_data(symbol):
     except:
         return None, None, None
 
+# Fungsi utama /scan
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
@@ -102,13 +106,14 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pesan += (
                 f"🔹 <b>{item['pair']}</b> (Jemput Bola)\n"
                 f"• RSI: {item['rsi']} (Oversold)\n"
-                f"• Harga: ${item['price']:.3f} | Vol: ${item['volume']:.2f}\n"
+                f"• Harga: ${item['price']:.3f} | Vol: ${item['volume']:,.2f}\n"
                 f"• Posisi: {item['posisi']}\n\n"
             )
         await update.message.reply_text(pesan, parse_mode="HTML")
     else:
         await update.message.reply_text("✅ Tidak ada pair dengan RSI < 40 saat ini.")
 
+# Main
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("scan", scan))

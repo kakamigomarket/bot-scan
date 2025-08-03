@@ -1,12 +1,14 @@
 import requests
 import os
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# Ambil dari Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
+# Daftar pair
 PAIRS = [
     "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT",
     "CRVUSDT", "ENSUSDT", "FORMUSDT", "TAOUSDT", "ALGOUSDT",
@@ -19,6 +21,7 @@ PAIRS = [
     "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
+# Hitung RSI berdasarkan TF
 def get_rsi(symbol, interval="1h"):
     try:
         url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}USDT&interval={interval}&limit=100"
@@ -38,6 +41,7 @@ def get_rsi(symbol, interval="1h"):
     except:
         return None
 
+# Ambil harga & volume
 def get_pair_data(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
@@ -50,6 +54,7 @@ def get_pair_data(symbol):
     except:
         return None, None, None
 
+# Fungsi pemindai sinyal
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, interval="1h"):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
@@ -89,7 +94,24 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, interval="1h"
     else:
         await update.message.reply_text(f"✅ Tidak ada pair dengan RSI < 40 di TF {interval}.")
 
-# Handler untuk tiap TF
+# /start dengan tombol keyboard
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("🚫 Maaf, kamu tidak diizinkan menggunakan bot ini.")
+        return
+
+    keyboard = [
+        ["/scan_15m", "/scan_1h"],
+        ["/scan_4h", "/scan_1d"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text(
+        "👋 Selamat datang!\nSilakan pilih time frame untuk sinyal Jemput Bola RSI:",
+        reply_markup=reply_markup
+    )
+
+# Handler khusus untuk tiap TF
 async def scan_15m(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await scan(update, context, interval="15m")
 
@@ -102,13 +124,15 @@ async def scan_4h(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scan_1d(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await scan(update, context, interval="1d")
 
+# Main app
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan_15m", scan_15m))
     app.add_handler(CommandHandler("scan_1h", scan_1h))
     app.add_handler(CommandHandler("scan_4h", scan_4h))
     app.add_handler(CommandHandler("scan_1d", scan_1d))
-    print("🚀 Bot Telegram siap menerima perintah /scan_15m /scan_1h /scan_4h /scan_1d")
+    print("🚀 Bot Telegram siap menerima perintah /start, /scan_15m, /scan_1h, /scan_4h, /scan_1d")
     app.run_polling()
 
 if __name__ == "__main__":

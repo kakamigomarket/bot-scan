@@ -1,11 +1,11 @@
 import requests
 import os
+import numpy as np
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_IDS = os.getenv("ALLOWED_IDS", "") 
+ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
 PAIRS = [
@@ -19,7 +19,6 @@ PAIRS = [
     "LDOUSDT", "WLDUSDT", "FETUSDT", "GRTUSDT",
     "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
-
 
 def get_rsi(symbol):
     try:
@@ -40,6 +39,20 @@ def get_rsi(symbol):
     except:
         return None
 
+def get_ema99(symbol):
+    try:
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit=100"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        closes = [float(entry[4]) for entry in data]
+        if len(closes) < 99:
+            return None
+        weights = np.exp(np.linspace(-1., 0., 99))
+        weights /= weights.sum()
+        ema = np.convolve(closes, weights, mode='valid')[-1]
+        return round(ema, 4)
+    except:
+        return None
 
 def get_pair_data(symbol):
     try:
@@ -53,7 +66,6 @@ def get_pair_data(symbol):
     except:
         return None, None, None
 
-
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
@@ -63,31 +75,40 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Memindai data semua pair, tunggu sebentar...")
 
     jemput_bola = []
-    laporan_lengkap = []
 
     for pair in PAIRS:
+        symbol = pair.replace("USDT", "")
         price, change, volume = get_pair_data(pair)
-        rsi = get_rsi(pair.replace("USDT", ""))
-        if price is None or rsi is None:
+        rsi = get_rsi(symbol)
+        ema99 = get_ema99(pair)
+
+        if None in (price, rsi, volume, ema99):
             continue
 
-        baris = f"{pair}: ${price:.4f} | 24h: {change:.2f}% | Vol: {volume/1_000_000:.2f}M | RSI: {rsi}"
-        laporan_lengkap.append(baris)
-
         if rsi < 40:
-            jemput_bola.append("🟡 " + baris)
-
-    if laporan_lengkap:
-        await update.message.reply_text("📊 **Laporan Lengkap**\n\n" + "\n".join(laporan_lengkap[:40]))
-        if len(laporan_lengkap) > 40:
-            await update.message.reply_text("\n".join(laporan_lengkap[40:]))
+            posisi = "🔽 Di bawah EMA99" if price < ema99 else "🔼 Di atas EMA99"
+            jemput_bola.append({
+                "pair": pair,
+                "rsi": rsi,
+                "price": price,
+                "volume": volume,
+                "posisi": posisi
+            })
 
     if jemput_bola:
-        await update.message.reply_text("📉 **Sinyal Jemput Bola (RSI < 40):**\n\n" + "\n".join(jemput_bola))
+        jemput_bola = sorted(jemput_bola, key=lambda x: x["rsi"])
+        pesan = "📉 <b>Sinyal Jemput Bola:</b>\n\n"
+        for item in jemput_bola:
+            pesan += (
+                f"🔹 <b>{item['pair']}</b> (Jemput Bola)\n"
+                f"• RSI: {item['rsi']} (Oversold)\n"
+                f"• Harga: ${item['price']:.3f} | Vol: ${item['volume']:.2f}\n"
+                f"• Posisi: {item['posisi']}\n\n"
+            )
+        await update.message.reply_text(pesan, parse_mode="HTML")
     else:
         await update.message.reply_text("✅ Tidak ada pair dengan RSI < 40 saat ini.")
 
-# Main
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("scan", scan))

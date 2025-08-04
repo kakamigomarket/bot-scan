@@ -1,4 +1,4 @@
-# main.py — Versi Debug dengan Validasi EMA99 sebagai Trend Besar
+# main.py — Versi Debug dengan Validasi EMA99 + Estimasi TP1 & TP2
 
 import os
 import requests
@@ -100,7 +100,17 @@ def debug_signal(pair: str, interval: str):
         reasons.append(f"harga terlalu jauh di bawah EMA99 ({last:.4f} < 95% EMA99)")
 
     notes = ", ".join(reasons) if reasons else "semua syarat terpenuhi"
-    return f"\n{status} <b>{pair}</b> | RSI={rsi_val:.2f} | Harga=${last:.4f} | EMA21={ema21v:.4f} | EMA99={ema99v:.4f} | Note: {notes}"
+
+    # Hitung TP hanya jika sinyal lolos
+    if status == "✅":
+        entry_range = f"${ema21v:.4f} – ${last:.4f}"
+        tp1 = last * 1.05
+        tp2 = last * 1.09
+        tp_note = f"• Entry: {entry_range}\n• TP1: ${tp1:.4f} (+5%) | TP2: ${tp2:.4f} (+9%)"
+    else:
+        tp_note = ""
+
+    return f"\n{status} <b>{pair}</b> | RSI={rsi_val:.2f} | Harga=${last:.4f} | EMA21={ema21v:.4f} | EMA99={ema99v:.4f}\nNote: {notes}\n{tp_note}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -141,7 +151,7 @@ def main():
     app.add_handler(CommandHandler("scan_1h", scan_1h))
     app.add_handler(CommandHandler("scan_4h", scan_4h))
     app.add_handler(CommandHandler("scan_1d", scan_1d))
-    print("🤖 Bot aktif (Debug Mode + EMA99). Perintah: /scan_1h /scan_4h /start")
+    print("🤖 Bot aktif (Debug Mode + EMA99 + TP). Perintah: /scan_1h /scan_4h /start")
     app.run_polling()
 
 if __name__ == "__main__":

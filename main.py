@@ -8,7 +8,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
-# Daftar pair
+
 PAIRS = [
     "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT",
     "CRVUSDT", "ENSUSDT", "FORMUSDT", "TAOUSDT", "ALGOUSDT",
@@ -21,10 +21,10 @@ PAIRS = [
     "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
-# Hitung RSI berdasarkan TF
+
 def get_rsi(symbol, interval="1h"):
     try:
-        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}USDT&interval={interval}&limit=100"
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
         response = requests.get(url, timeout=10)
         data = response.json()
         closes = [float(entry[4]) for entry in data]
@@ -41,7 +41,21 @@ def get_rsi(symbol, interval="1h"):
     except:
         return None
 
-# Ambil harga & volume
+
+def get_ema99(symbol, interval="1h"):
+    try:
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=120"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        closes = [float(entry[4]) for entry in data]
+        if len(closes) < 99:
+            return None
+        ema = sum(closes[-99:]) / 99  # Simple average as approximation
+        return round(ema, 4)
+    except:
+        return None
+
+
 def get_pair_data(symbol):
     try:
         url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
@@ -54,31 +68,33 @@ def get_pair_data(symbol):
     except:
         return None, None, None
 
-# Fungsi pemindai sinyal
+
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, interval="1h"):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
         await update.message.reply_text("🚫 Maaf, kamu tidak diizinkan menggunakan bot ini.")
         return
 
-    await update.message.reply_text(f"🔍 Memindai RSI ({interval})...")
+    await update.message.reply_text(f"🔍 Memindai RSI + EMA99 ({interval})...")
 
     jemput_bola = []
 
     for pair in PAIRS:
-        symbol = pair.replace("USDT", "")
         price, change, volume = get_pair_data(pair)
-        rsi = get_rsi(symbol, interval)
+        rsi = get_rsi(pair, interval)
+        ema = get_ema99(pair, interval)
 
-        if None in (price, rsi, volume):
+        if None in (price, rsi, volume, ema):
             continue
 
         if rsi < 40:
+            posisi = "🔽 Di bawah EMA99" if price < ema else "🔼 Di atas EMA99"
             jemput_bola.append({
                 "pair": pair,
                 "rsi": rsi,
                 "price": price,
-                "volume": volume
+                "volume": volume,
+                "posisi": posisi
             })
 
     if jemput_bola:
@@ -87,14 +103,15 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, interval="1h"
         for item in jemput_bola:
             pesan += (
                 f"🔹 <b>{item['pair']}</b>\n"
-                f"• RSI: {item['rsi']}\n"
-                f"• Harga: ${item['price']:.3f} | Vol: ${item['volume']:.2f}\n\n"
+                f"• RSI: {item['rsi']} (Oversold)\n"
+                f"• Harga: ${item['price']:.4f} | Vol: ${item['volume']:.2f}\n"
+                f"• Posisi: {item['posisi']}\n\n"
             )
         await update.message.reply_text(pesan, parse_mode="HTML")
     else:
         await update.message.reply_text(f"✅ Tidak ada pair dengan RSI < 40 di TF {interval}.")
 
-# /start dengan tombol keyboard
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in ALLOWED_USERS:
@@ -111,7 +128,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Handler khusus untuk tiap TF
+# Handler TF
 async def scan_15m(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await scan(update, context, interval="15m")
 
@@ -124,7 +141,7 @@ async def scan_4h(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scan_1d(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await scan(update, context, interval="1d")
 
-# Main app
+# Main App
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -132,7 +149,7 @@ def main():
     app.add_handler(CommandHandler("scan_1h", scan_1h))
     app.add_handler(CommandHandler("scan_4h", scan_4h))
     app.add_handler(CommandHandler("scan_1d", scan_1d))
-    print("🚀 Bot Telegram siap menerima perintah /start, /scan_15m, /scan_1h, /scan_4h, /scan_1d")
+    print("🚀 Bot Telegram siap menerima perintah /start /scan_1h /scan_4h dst")
     app.run_polling()
 
 if __name__ == "__main__":

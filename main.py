@@ -1,4 +1,4 @@
-# main.py — Debug + EMA99 + TP Adaptif (tanpa HTML, async send, guards)
+# main.py — TP Adaptif + EMA99 + Debug (tanpa HTML, async send, guards, rate-limit)
 
 import os
 import asyncio
@@ -6,13 +6,13 @@ import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# ========= ENV =========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
+ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")  # contoh: "12345,67890"
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
+RSI_PERIOD = int(os.getenv("RSI_PERIOD", "14"))  # bisa 6 jika ingin RSI(6)
 
-# Ubah jika ingin RSI(6): set env RSI_PERIOD=6
-RSI_PERIOD = int(os.getenv("RSI_PERIOD", "14"))
-
+# ========= LIST PAIRS (lengkap) =========
 PAIRS = [
     "SEIUSDT","RAYUSDT","PENDLEUSDT","JUPUSDT","ENAUSDT","CRVUSDT","ENSUSDT",
     "FORMUSDT","TAOUSDT","ALGOUSDT","XTZUSDT","CAKEUSDT","HBARUSDT","NEXOUSDT",
@@ -24,7 +24,7 @@ PAIRS = [
 
 BINANCE = "https://api.binance.com"
 
-# --- TP adaptif berdasar volatilitas token ---
+# ========= TP ADAPTIF =========
 TP_CONFIG = {
     "LOW":    {"TP1": 0.05, "TP2": 0.08},  # contoh: ADA, XRP
     "MEDIUM": {"TP1": 0.06, "TP2": 0.10},  # contoh: CRV, CFX, SEI
@@ -37,11 +37,13 @@ TOKEN_TYPE = {
 }
 DEFAULT_CAT = "MEDIUM"
 
-# ---------- Helpers ----------
+# ========= HELPERS =========
 def is_allowed(user_id: int) -> bool:
+    # Jika ALLOWED_IDS kosong, izinkan semua (untuk testing); jika ada, harus ada di daftar
     return (user_id in ALLOWED_USERS) if ALLOWED_USERS else True
 
 async def reply_long(update: Update, text: str, chunk: int = 3500):
+    """Kirim pesan panjang dengan pemotongan otomatis (tanpa HTML)."""
     for i in range(0, len(text), chunk):
         await update.message.reply_text(text[i:i+chunk], disable_web_page_preview=True)
 
@@ -64,7 +66,8 @@ def fetch_ticker(symbol: str):
         return None, None, None
 
 def ema(values: list, period: int):
-    if len(values) < period: return None
+    if len(values) < period:
+        return None
     k = 2 / (period + 1)
     e = sum(values[:period]) / period
     for v in values[period:]:
@@ -72,7 +75,8 @@ def ema(values: list, period: int):
     return e
 
 def rsi(values: list, period: int = 14):
-    if len(values) <= period: return None
+    if len(values) <= period:
+        return None
     deltas = [values[i+1] - values[i] for i in range(len(values)-1)]
     gains = [max(d, 0) for d in deltas]
     losses = [max(-d, 0) for d in deltas]
@@ -81,21 +85,38 @@ def rsi(values: list, period: int = 14):
     for i in range(period, len(deltas)):
         avg_gain = (avg_gain*(period-1) + gains[i]) / period
         avg_loss = (avg_loss*(period-1) + losses[i]) / period
-    if avg_loss == 0: return 100.0
+    if avg_loss == 0:
+        return 100.0
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 def volume_breakout(klines, mult: float = 1.3):
+    """Return (flag, now, avg). flag=True jika volume terakhir >= mult * avg20. None jika data kurang."""
     try:
-        if len(klines) < 22: return None
+        if len(klines) < 22:
+            return None, 0.0, 0.0
         vols = [float(k[5]) for k in klines[:-1]]
         avg = sum(vols[-20:]) / 20
         now = float(klines[-1][5])
-        return now >= mult * avg
+        return (now >= mult * avg), now, avg
     except Exception:
-        return None
+        return None, 0.0, 0.0
 
-# ---------- Core (debug) ----------
+def dynamic_multiplier(rsi_val: float, vol_now: float, vol_avg: float, last: float, ema99v: float) -> float:
+    """Hitung multiplier TP berbasis kondisi market. Batas 0.8–1.2 (aman)."""
+    m = 1.0
+    if rsi_val is not None and rsi_val < 30:   # oversold dalam → target lebih berani
+        m += 0.10
+    if vol_avg > 0 and vol_now >= 2.0 * vol_avg:  # ledakan volume → tambah target
+        m += 0.10
+    if ema99v is not None and last > ema99v:   # sudah di atas EMA99 → tren besar dukung
+        m += 0.05
+    # clamp
+    if m > 1.20: m = 1.20
+    if m < 0.80: m = 0.80
+    return m
+
+# ========= CORE (debug & sinyal) =========
 def debug_signal(pair: str, interval: str):
     price, change, _ = fetch_ticker(pair)
     if price is None or change is None:
@@ -116,34 +137,39 @@ def debug_signal(pair: str, interval: str):
         return f"\n❌ {pair} | Note: indikator tidak cukup (RSI/EMA None)"
 
     last = closes[-1]
-    vol_ok = volume_breakout(kl, mult=1.3)
+    vol_ok, v_now, v_avg = volume_breakout(kl, mult=1.3)
 
     # Fokus kandidat: RSI < 40
     if rsi_val >= 40:
         return None
 
+    # Evaluasi filter
     reasons, passed = [], True
-    if not (last > ema21v):         reasons.append("harga ≤ EMA21"); passed = False
-    if vol_ok is None:              reasons.append("data volume kurang"); passed = False
-    elif not vol_ok:                reasons.append("volume lemah"); passed = False
-    if change is not None and change > 10: reasons.append("sudah naik >10% 24h"); passed = False
-    if not (last >= ema99v * 0.95): reasons.append(f"terlalu jauh di bawah EMA99 ({last:.4f} < 95% EMA99)"); passed = False
+    if not (last > ema21v):                   reasons.append("harga ≤ EMA21"); passed = False
+    if vol_ok is None:                        reasons.append("data volume kurang"); passed = False
+    elif not vol_ok:                          reasons.append("volume lemah"); passed = False
+    if change is not None and change > 10:    reasons.append("sudah naik >10% 24h"); passed = False
+    if not (last >= ema99v * 0.95):           reasons.append(f"terlalu jauh di bawah EMA99 ({last:.4f} < 95% EMA99)"); passed = False
 
     status = "✅" if passed else "❌"
     notes = ", ".join(reasons) if reasons else "semua syarat terpenuhi"
 
+    # Hitung TP adaptif bila lolos
     tp_note = ""
     if passed:
-        # TP adaptif berdasarkan kategori token
         cat = TOKEN_TYPE.get(pair, DEFAULT_CAT)
-        cfg = TP_CONFIG.get(cat, TP_CONFIG[DEFAULT_CAT])
+        base = TP_CONFIG.get(cat, TP_CONFIG[DEFAULT_CAT])
+        mult = dynamic_multiplier(rsi_val, v_now, v_avg, last, ema99v)
+
         entry_low, entry_high = ema21v, last
-        tp1 = entry_high * (1 + cfg["TP1"])
-        tp2 = entry_high * (1 + cfg["TP2"])
+        tp1 = entry_high * (1 + base["TP1"] * mult)
+        tp2 = entry_high * (1 + base["TP2"] * mult)
+
         tp_note = (
             f"• Entry: ${entry_low:.4f} – ${entry_high:.4f}\n"
-            f"• TP1: ${tp1:.4f} (+{int(cfg['TP1']*100)}%) | "
-            f"TP2: ${tp2:.4f} (+{int(cfg['TP2']*100)}%)"
+            f"• TP1: ${tp1:.4f} (+{base['TP1']*mult*100:.1f}%) | "
+            f"TP2: ${tp2:.4f} (+{base['TP2']*mult*100:.1f}%)\n"
+            f"• Cat: {cat} | Multiplier: {mult:.2f}"
         )
 
     return (
@@ -152,7 +178,7 @@ def debug_signal(pair: str, interval: str):
         f"Note: {notes}\n{tp_note}"
     )
 
-# ---------- Bot handlers ----------
+# ========= BOT HANDLERS =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_allowed(uid):
@@ -160,7 +186,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     kb = [["/scan_15m", "/scan_1h"], ["/scan_4h", "/scan_1d"]]
     await update.message.reply_text(
-        "📊 Ketik /scan_1h untuk sinyal debug. Perintah lain: /scan_15m /scan_4h /scan_1d",
+        "👋 Selamat datang!\n"
+        "Perintah cepat:\n"
+        "• Scan: /scan_15m /scan_1h /scan_4h /scan_1d\n"
+        "RSI period bisa diatur via env: RSI_PERIOD (default 14)",
         reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
     )
 
@@ -171,6 +200,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, tf: str):
         return
 
     await update.message.reply_text(f"🔍 Scan Jemput Bola TF {tf} (Debug Mode)...")
+
     lines = []
     for p in PAIRS:
         try:
@@ -178,11 +208,12 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, tf: str):
             if sig:
                 lines.append(sig)
         except Exception:
+            # jangan biarkan satu pair menggagalkan semuanya
             lines.append(f"\n❌ {p} | Note: internal error saat proses")
-        await asyncio.sleep(0.08)
+        await asyncio.sleep(0.08)  # ramah rate-limit
 
     if not lines:
-        await update.message.reply_text("✅ Tidak ada token dengan RSI < 40 saat ini.")
+        await update.message.reply_text("✅ Tidak ada token kandidat RSI < 40 saat ini.")
     else:
         header = f"📈 Debug Sinyal RSI < 40 • TF {tf}\n"
         await reply_long(update, header + "".join(lines))
@@ -194,14 +225,14 @@ async def scan_1d(update: Update, context: ContextTypes.DEFAULT_TYPE):  await sc
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("❌ BOT_TOKEN belum diatur di Railway")
+        raise RuntimeError("❌ BOT_TOKEN belum diatur di environment")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan_15m", scan_15m))
     app.add_handler(CommandHandler("scan_1h", scan_1h))
     app.add_handler(CommandHandler("scan_4h", scan_4h))
     app.add_handler(CommandHandler("scan_1d", scan_1d))
-    print("🤖 Bot aktif (TP adaptif + EMA99 + Debug Mode)")
+    print("🤖 Bot aktif (TP adaptif + EMA99 + Debug Mode). Perintah: /start /scan_1h /scan_4h")
     app.run_polling()
 
 if __name__ == "__main__":

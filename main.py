@@ -1,6 +1,7 @@
-# main.py — Versi Debug dengan Validasi EMA99 + Estimasi TP1 & TP2
+# main.py — Debug + EMA99 + TP • FIXED (safe EMA guard + long message split)
 
 import os
+import time
 import requests
 from typing import List, Tuple, Optional
 from telegram import Update, ReplyKeyboardMarkup
@@ -20,15 +21,22 @@ PAIRS = ["SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT", "CRVUSDT", "E
 BINANCE = "https://api.binance.com"
 
 
+# ---------- Helpers ----------
 def is_allowed(user_id: int) -> bool:
     return (user_id in ALLOWED_USERS) if ALLOWED_USERS else True
+
+def reply_long(update: Update, text: str, chunk: int = 3500):
+    """Kirim pesan panjang dengan pemotongan otomatis agar tidak kena limit Telegram."""
+    for i in range(0, len(text), chunk):
+        update.message.reply_text(text[i:i+chunk], parse_mode="HTML", disable_web_page_preview=True)
 
 def fetch_klines(symbol: str, interval: str, limit: int = 120):
     url = f"{BINANCE}/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         res = requests.get(url, timeout=10)
-        return res.json()
-    except:
+        data = res.json()
+        return data if isinstance(data, list) else None
+    except Exception:
         return None
 
 def fetch_ticker(symbol: str):
@@ -37,12 +45,15 @@ def fetch_ticker(symbol: str):
         res = requests.get(url, timeout=10)
         d = res.json()
         return float(d['lastPrice']), float(d['priceChangePercent']), float(d['quoteVolume'])
-    except:
+    except Exception:
         return None, None, None
 
 def ema(values: list, period: int):
+    """EMA dengan guard agar tidak ZeroDivisionError ketika data < period."""
+    if len(values) < period:
+        return None
     k = 2 / (period + 1)
-    ema_val = sum(values[:period]) / period
+    ema_val = sum(values[:period]) / period  # SMA seed
     for price in values[period:]:
         ema_val = price * k + ema_val * (1 - k)
     return ema_val
@@ -59,83 +70,126 @@ def rsi(values: list, period: int = 14):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_loss == 0:
-        return 100
+        return 100.0
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def volume_breakout(klines):
+def volume_breakout(klines, mult: float = 1.3):
+    """Return True jika volume candle terakhir >= mult × rata-rata 20 candle sebelumnya.
+       Return None jika data volume belum cukup."""
     try:
+        if len(klines) < 22:
+            return None
         vols = [float(k[5]) for k in klines[:-1]]
         avg = sum(vols[-20:]) / 20
         now = float(klines[-1][5])
-        return now >= 1.3 * avg
-    except:
-        return False
+        return now >= mult * avg
+    except Exception:
+        return None
 
+
+# ---------- Core (debug) ----------
 def debug_signal(pair: str, interval: str):
     price, change, vol = fetch_ticker(pair)
-    if not price:
-        return None
-    kl = fetch_klines(pair, interval, 100)
-    if not kl: return None
+    if price is None or change is None:
+        return f"\n❌ <b>{pair}</b> | Note: gagal ambil ticker"
+    kl = fetch_klines(pair, interval, 120)
+    if not kl:
+        return f"\n❌ <b>{pair}</b> | Note: gagal ambil klines"
+
     closes = [float(k[4]) for k in kl]
+    if len(closes) < 100:  # butuh minimal untuk EMA99 yang stabil
+        return f"\n❌ <b>{pair}</b> | Note: data candle kurang (punya {len(closes)}, perlu ≥100)"
+
     rsi_val = rsi(closes)
     ema21v = ema(closes, 21)
     ema99v = ema(closes, 99)
-    last = closes[-1]
-    vol_break = volume_breakout(kl)
+    if rsi_val is None or ema21v is None or ema99v is None:
+        return f"\n❌ <b>{pair}</b> | Note: indikator tidak cukup (RSI/EMA None)"
 
+    last = closes[-1]
+    vol_break = volume_breakout(kl, mult=1.3)
+
+    # Fokus debug pada RSI < 40 saja agar tidak kebanyakan output
     if rsi_val >= 40:
         return None
 
-    status = "✅" if (last > ema21v and vol_break and change < 10 and last >= ema99v * 0.95) else "❌"
     reasons = []
-    if last <= ema21v:
-        reasons.append("harga < EMA21")
-    if not vol_break:
-        reasons.append("volume lemah")
-    if change > 10:
-        reasons.append("sudah naik >10%")
-    if last < ema99v * 0.95:
-        reasons.append(f"harga terlalu jauh di bawah EMA99 ({last:.4f} < 95% EMA99)")
+    passed = True
 
+    if not (last > ema21v):
+        reasons.append("harga ≤ EMA21")
+        passed = False
+
+    if vol_break is None:
+        reasons.append("data volume kurang")
+        passed = False
+    elif not vol_break:
+        reasons.append("volume lemah")
+        passed = False
+
+    if change is not None and change > 10:
+        reasons.append("sudah naik >10% 24h")
+        passed = False
+
+    if not (last >= (ema99v * 0.95)):
+        reasons.append(f"terlalu jauh di bawah EMA99 ({last:.4f} < 95% EMA99)")
+        passed = False
+
+    status = "✅" if passed else "❌"
     notes = ", ".join(reasons) if reasons else "semua syarat terpenuhi"
 
-    # Hitung TP hanya jika sinyal lolos
-    if status == "✅":
-        entry_range = f"${ema21v:.4f} – ${last:.4f}"
-        tp1 = last * 1.05
-        tp2 = last * 1.09
-        tp_note = f"• Entry: {entry_range}\n• TP1: ${tp1:.4f} (+5%) | TP2: ${tp2:.4f} (+9%)"
-    else:
-        tp_note = ""
+    # TP hanya jika lolos
+    tp_note = ""
+    if passed:
+        entry_low = ema21v
+        entry_high = last
+        tp1 = entry_high * 1.05
+        tp2 = entry_high * 1.09
+        tp_note = (
+            f"• Entry: ${entry_low:.4f} – ${entry_high:.4f}\n"
+            f"• TP1: ${tp1:.4f} (+5%) | TP2: ${tp2:.4f} (+9%)"
+        )
 
-    return f"\n{status} <b>{pair}</b> | RSI={rsi_val:.2f} | Harga=${last:.4f} | EMA21={ema21v:.4f} | EMA99={ema99v:.4f}\nNote: {notes}\n{tp_note}"
+    return (
+        f"\n{status} <b>{pair}</b> | RSI={rsi_val:.2f} | Harga=${last:.4f} | "
+        f"EMA21=${ema21v:.4f} | EMA99=${ema99v:.4f}\n"
+        f"Note: {notes}\n{tp_note}"
+    )
 
+
+# ---------- Bot handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not is_allowed(uid):
         await update.message.reply_text("🚫 Tidak diizinkan.")
         return
     kb = [["/scan_15m", "/scan_1h"], ["/scan_4h", "/scan_1d"]]
-    await update.message.reply_text("📊 Ketik /scan_1h untuk sinyal debug. Perintah lain: /scan_15m /scan_4h /scan_1d",
-                                    reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    await update.message.reply_text(
+        "📊 Ketik /scan_1h untuk sinyal debug. Perintah lain: /scan_15m /scan_4h /scan_1d",
+        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    )
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, tf: str):
     uid = update.effective_user.id
     if not is_allowed(uid):
         await update.message.reply_text("🚫 Tidak diizinkan.")
         return
+
     await update.message.reply_text(f"🔍 Scan Jemput Bola TF {tf} (Debug Mode)...")
-    result = ""
-    for p in PAIRS:
+
+    lines = []
+    for i, p in enumerate(PAIRS):
         sig = debug_signal(p, tf)
         if sig:
-            result += sig
-    if not result:
+            lines.append(sig)
+        time.sleep(0.08)  # kecil saja, bantu kurangi burst request
+
+    if not lines:
         await update.message.reply_text("✅ Tidak ada token dengan RSI < 40 saat ini.")
     else:
-        await update.message.reply_text(f"📈 <b>Debug Sinyal RSI < 40 • TF {tf}</b>\n{result}", parse_mode="HTML")
+        header = f"📈 <b>Debug Sinyal RSI < 40 • TF {tf}</b>\n"
+        reply_long(update, header + "".join(lines))
 
 async def scan_15m(update: Update, context: ContextTypes.DEFAULT_TYPE): await scan(update, context, "15m")
 async def scan_1h(update: Update, context: ContextTypes.DEFAULT_TYPE): await scan(update, context, "1h")

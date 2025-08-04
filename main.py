@@ -1,7 +1,6 @@
-# main.py — Versi upgrade sinyal Jemput Bola dengan filter lengkap
+# main.py — Versi optimal sinyal Jemput Bola (filter efektif, tidak terlalu ketat)
 
 import os
-import math
 import requests
 from typing import List, Tuple, Optional
 from telegram import Update, ReplyKeyboardMarkup
@@ -19,7 +18,6 @@ PAIRS = ["SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT", "CRVUSDT", "E
          "LDOUSDT", "WLDUSDT", "FETUSDT", "GRTUSDT", "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"]
 
 BINANCE = "https://api.binance.com"
-
 
 def is_allowed(user_id: int) -> bool:
     return (user_id in ALLOWED_USERS) if ALLOWED_USERS else True
@@ -64,41 +62,16 @@ def rsi(values: List[float], period: int = 14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-def valid_candle_breakout(klines):
-    try:
-        last = klines[-1]
-        prev = klines[-2]
-        body = abs(float(last[4]) - float(last[1]))
-        prev_body = abs(float(prev[4]) - float(prev[1]))
-        # Bullish body besar dan close > high 3 candle sebelumnya
-        last_close = float(last[4])
-        highs = [float(k[2]) for k in klines[-4:-1]]
-        breakout = last_close > max(highs)
-        return body > prev_body and breakout
-    except:
-        return False
-
 def volume_breakout(klines):
     try:
         vols = [float(k[5]) for k in klines[:-1]]
         avg = sum(vols[-20:]) / 20
         now = float(klines[-1][5])
-        return now >= 1.5 * avg
+        return now >= 1.3 * avg
     except:
         return False
 
-def get_btc_status():
-    kl = fetch_klines("BTCUSDT", "1h", 100)
-    if not kl: return False
-    closes = [float(k[4]) for k in kl]
-    rsi_val = rsi(closes)
-    ema21 = ema(closes, 21)
-    last = closes[-1]
-    return rsi_val and rsi_val > 45 and last > ema21
-
 def build_signal(pair: str, interval: str):
-    if pair == "BTCUSDT":
-        return None
     price, change, vol = fetch_ticker(pair)
     if not price or change > 10:
         return None
@@ -106,17 +79,14 @@ def build_signal(pair: str, interval: str):
     if not kl: return None
     closes = [float(k[4]) for k in kl]
     rsi_val = rsi(closes)
-    ema9v = ema(closes, 9)
     ema21v = ema(closes, 21)
     last = closes[-1]
-    if rsi_val < 40 and last > ema9v and last > ema21v and ema9v >= ema21v:
-        if not valid_candle_breakout(kl) or not volume_breakout(kl):
-            return None
+    if rsi_val < 40 and last > ema21v and volume_breakout(kl):
         tp1 = last * 1.05
         tp2 = last * 1.09
         return f"\n🔹 <b>{pair}</b>\n" \
-               f"• Harga: ${last:.4f} | RSI: {rsi_val:.2f} | EMA9: {ema9v:.4f} | EMA21: {ema21v:.4f}\n" \
-               f"• Entry: ${ema9v:.4f} – ${last:.4f}\n" \
+               f"• Harga: ${last:.4f} | RSI: {rsi_val:.2f} | EMA21: {ema21v:.4f}\n" \
+               f"• Entry: ${ema21v:.4f} – ${last:.4f}\n" \
                f"• TP1: ${tp1:.4f} (+5.0%) | TP2: ${tp2:.4f} (+9.0%)\n"
     return None
 
@@ -133,9 +103,6 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE, tf: str):
     uid = update.effective_user.id
     if not is_allowed(uid):
         await update.message.reply_text("🚫 Tidak diizinkan.")
-        return
-    if not get_btc_status():
-        await update.message.reply_text("⚠️ BTC tidak mendukung (RSI<45 / breakdown EMA21). Tunda entry dulu.")
         return
     await update.message.reply_text(f"🔍 Scan Jemput Bola TF {tf}...")
     result = ""

@@ -5,16 +5,16 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
+ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")  # Misalnya: "123456789,987654321"
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
 PAIRS = [
-    "SEIUSDT","RAYUSDT","PENDLEUSDT","JUPUSDT","ENAUSDT","CRVUSDT","ENSUSDT",
-    "FORMUSDT","TAOUSDT","ALGOUSDT","XTZUSDT","CAKEUSDT","HBARUSDT","NEXOUSDT",
-    "GALAUSDT","IOTAUSDT","THETAUSDT","CFXUSDT","WIFUSDT","BTCUSDT","ETHUSDT",
-    "BNBUSDT","SOLUSDT","XRPUSDT","DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT",
-    "AAVEUSDT","ATOMUSDT","INJUSDT","QNTUSDT","ARBUSDT","NEARUSDT","SUIUSDT",
-    "LDOUSDT","WLDUSDT","FETUSDT","GRTUSDT","PYTHUSDT","ASRUSDT","HYPERUSDT","TRXUSDT"
+    "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT", "CRVUSDT", "ENSUSDT",
+    "FORMUSDT", "TAOUSDT", "ALGOUSDT", "XTZUSDT", "CAKEUSDT", "HBARUSDT", "NEXOUSDT",
+    "GALAUSDT", "IOTAUSDT", "THETAUSDT", "CFXUSDT", "WIFUSDT", "BTCUSDT", "ETHUSDT",
+    "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
+    "AAVEUSDT", "ATOMUSDT", "INJUSDT", "QNTUSDT", "ARBUSDT", "NEARUSDT", "SUIUSDT",
+    "LDOUSDT", "WLDUSDT", "FETUSDT", "GRTUSDT", "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
 STRATEGIES = {
@@ -29,6 +29,34 @@ TF_INTERVALS = {
     "TF4h": "4h",
     "TF1d": "1d"
 }
+
+MAIN_MENU = [
+    ["📈 Trading Spot"],
+    ["ℹ️ Info Strategi", "❓ Help"]
+]
+
+STRATEGY_MENU = [[s] for s in STRATEGIES.keys()]
+
+INFO_TEXT = (
+    "🔴 *Jemput Bola*\n"
+    "Fokus pada token yang oversold, cocok untuk akumulasi swing pendek.\n"
+    "✅ Sesuai untuk strategi akumulasi cepat saat koreksi dalam.\n\n"
+    "🟡 *Rebound Swing*\n"
+    "Ideal untuk tangkap momentum reversal ringan.\n"
+    "✅ Sesuai untuk strategi rotasi swing harian – menargetkan pantulan.\n\n"
+    "🟢 *Scalping Breakout*\n"
+    "Lebih tinggi dari dua mode lain karena tujuannya menangkap awal breakout, bukan oversold.\n"
+    "✅ Sesuai untuk mode scalping breakout cepat berbasis volume & momentum."
+)
+
+HELP_TEXT = (
+    "🤖 *Bot Telegram Trading Spot Binance*\n"
+    "Bot ini akan scan harga crypto real-time dengan 3 strategi:\n"
+    "- Jemput Bola (koreksi dalam)\n"
+    "- Rebound Swing (rotasi harian)\n"
+    "- Scalping Breakout (momentum & volume)\n\n"
+    "📩 Untuk aktivasi fitur premium hubungi: @KikioOreo"
+)
 
 def get_price(symbol: str) -> float:
     try:
@@ -64,19 +92,37 @@ def get_ema_rsi(symbol: str, interval: str, length: int = 14) -> tuple:
         return -1, -1, -1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ALLOWED_USERS:
-        return
-    keyboard = [[key] for key in STRATEGIES.keys()]
+    keyboard = MAIN_MENU
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
+    await update.message.reply_text("📍 Selamat datang! Silakan pilih menu:", reply_markup=reply_markup)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ALLOWED_USERS:
-        return
+    user_id = update.effective_user.id
     text = update.message.text.strip()
+
+    if text == "📈 Trading Spot":
+        if user_id in ALLOWED_USERS:
+            reply_markup = ReplyKeyboardMarkup(STRATEGY_MENU, resize_keyboard=True)
+            await update.message.reply_text("📌 Pilih strategi yang ingin kamu gunakan:", reply_markup=reply_markup)
+        else:
+            await update.message.reply_text("⛔ Akses terbatas. Hubungi admin untuk aktivasi: @KikioOreo")
+        return
+
+    if text == "ℹ️ Info Strategi":
+        await update.message.reply_text(INFO_TEXT, parse_mode="Markdown")
+        return
+
+    if text == "❓ Help":
+        await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+        return
+
     strategy = STRATEGIES.get(text)
     if not strategy:
-        await update.message.reply_text("⛔ Perintah tidak dikenali.")
+        await update.message.reply_text("❌ Perintah tidak dikenali.")
+        return
+
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("⛔ Fitur ini hanya untuk pengguna terdaftar. Hubungi: @KikioOreo")
         return
 
     await update.message.reply_text(f"🔍 Sedang memindai sinyal untuk strategi *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")
@@ -116,7 +162,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tf_main = valid_tfs[0]
             rsi_val = rsi_cache[tf_main]
             ema_val = ema21_cache[tf_main]
-
             tp1 = round(price * (1 + tp1_pct / 100), 4)
             tp2 = round(price * (1 + tp2_pct / 100), 4)
 

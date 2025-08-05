@@ -115,26 +115,16 @@ async def scan_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE, stra
         await update.message.reply_text("❌ Tidak ada token yang layak entry saat ini.")
         return
 
-    msg = f"📊 *Strategi {strategy.upper()} - Token Layak Entry ✅*
-
-"
+    msg = f"📊 Strategi {strategy.upper()} - Token Layak Entry ✅\n\n"
     for res in results:
         msg += (
-            f"✅ *{res['pair']}*
-"
-            f"💰 Harga: ${res['price']}
-"
-            f"📉 RSI: {res['rsi']} | EMA21: {res['ema21']}
-"
-            f"🎯 Entry: ${res['entry']}
-"
-            f"🎯 TP1: ${res['tp1']}
-"
-            f"🎯 TP2: ${res['tp2']}
-"
-            f"🟢 Status: LAYAK ENTRY ✅
-
-"
+            f"✅ *{res['pair']}*\n"
+            f"💰 Harga: ${res['price']}\n"
+            f"📉 RSI: {res['rsi']} | EMA21: {res['ema21']}\n"
+            f"🎯 Entry: ${res['entry']}\n"
+            f"🎯 TP1: ${res['tp1']}\n"
+            f"🎯 TP2: ${res['tp2']}\n"
+            f"🟢 Status: LAYAK ENTRY ✅\n\n"
         )
 
     await update.message.reply_text(msg.strip(), parse_mode="Markdown")
@@ -151,9 +141,9 @@ async def handle_scalp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ALLOWED_USERS:
         return
-    keyboard = [
-        ["🟥 Jemput Bola", "🟡 Rebound Swing", "🟢 Scalping Breakout"]
-    ]
+    keyboard = [[
+        "🟥 Jemput Bola", "🟡 Rebound Swing", "🟢 Scalping Breakout"
+    ]]
     await update.message.reply_text(
         "📌 Pilih Strategi Analisa:",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -176,85 +166,22 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("scalp", handle_scalp))
     app.add_handler(CommandHandler("menu", start))
     app.add_handler(CommandHandler("scan", start))
-    app.add_handler(CommandHandler("cek", start))
+    app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("strategi", start))
-    app.add_handler(CommandHandler("pilih", start))
-    app.add_handler(CommandHandler("go", start))
-    app.add_handler(CommandHandler("aktif", start))
-    app.add_handler(CommandHandler("command", start))
-    app.add_handler(CommandHandler("signal", start))
-    app.add_handler(CommandHandler("trigger", start))
-    app.add_handler(CommandHandler("mode", start))
-    app.add_handler(CommandHandler("analisa", start))
-    app.add_handler(CommandHandler("sinyal", start))
     app.add_handler(CommandHandler("pantau", start))
     app.add_handler(CommandHandler("monitor", start))
-    app.add_handler(CommandHandler("entry", start))
-    app.add_handler(CommandHandler("token", start))
+    app.add_handler(CommandHandler("cek", start))
+    app.add_handler(CommandHandler("go", start))
+    app.add_handler(CommandHandler("aktif", start))
+    app.add_handler(CommandHandler("signal", start))
+    app.add_handler(CommandHandler("trigger", start))
+    app.add_handler(CommandHandler("command", start))
+    app.add_handler(CommandHandler("analisa", start))
+    app.add_handler(CommandHandler("sinyal", start))
     app.add_handler(CommandHandler("watchlist", start))
-    app.add_handler(CommandHandler("cuan", start))
-    app.add_handler(CommandHandler("startagain", start))
-    app.add_handler(CommandHandler("ulang", start))
-    app.add_handler(CommandHandler("reset", start))
-    app.add_handler(CommandHandler("help", start))
-    app.add_handler(CommandHandler("scanlagi", start))
-    app.add_handler(CommandHandler("jalan", start))
-    app.add_handler(CommandHandler("triggerkan", start))
-    app.add_handler(CommandHandler("strategipilih", start))
-    app.add_handler(CommandHandler("gocek", start))
-    app.add_handler(CommandHandler("pantaukini", start))
-    app.add_handler(CommandHandler("analisaentry", start))
-    app.add_handler(CommandHandler("sinyalcek", start))
-    app.add_handler(CommandHandler("cekanalisa", start))
-    app.add_handler(CommandHandler("trading", start))
-    app.add_handler(CommandHandler("jalankan", start))
-    app.add_handler(CommandHandler("pantauchart", start))
-    app.add_handler(CommandHandler("scanalisis", start))
-    app.add_handler(CommandHandler("monitoring", start))
-    app.add_handler(CommandHandler("modejalan", start))
-    app.add_handler(CommandHandler("pantauentry", start))
-    app.add_handler(CommandHandler("cekstrategi", start))
-    app.add_handler(CommandHandler("pantausemua", start))
+    app.add_handler(CommandHandler("token", start))
+    app.add_handler(CommandHandler("entry", start))
     app.add_handler(CommandHandler("layakentry", start))
-    app.add_handler(CommandHandler("pantautoken", start))
-    app.add_handler(CommandHandler("cekpantau", start))
-    app.add_handler(CommandHandler("analisaok", start))
-    app.add_handler(CommandHandler("cekentry", start))
-    app.add_handler(CommandHandler("sinyalpenuh", start))
-    app.add_handler(CommandHandler("strategirun", start))
-    app.add_handler(CommandHandler("analisisekarang", start))
-    app.add_handler(CommandHandler("pantautrading", start))
-    app.add_handler(CommandHandler("analisistrading", start))
-    app.add_handler(CommandHandler("pantautrigger", start))
-    app.add_handler(CommandHandler("triggerentry", start))
-    app.add_handler(CommandHandler("triggerstrategi", start))
     app.add_handler(CommandHandler("tombol", start))
-    app.add_handler(CommandHandler("strategilist", start))
-    app.add_handler(CommandHandler("pilihstrategi", start))
-    app.add_handler(CommandHandler("tradingbot", start))
-    app.add_handler(CommandHandler("tombolmode", start))
-    app.add_handler(CommandHandler("commandlist", start))
-    app.add_handler(CommandHandler("perintah", start))
-    app.add_handler(CommandHandler("tombolstrategi", start))
-    app.add_handler(CommandHandler("aktifkan", start))
-    app.add_handler(CommandHandler("pantauchartnya", start))
-    app.add_handler(CommandHandler("cekbot", start))
-    app.add_handler(CommandHandler("pantaupenuh", start))
-    app.add_handler(CommandHandler("strategipenuh", start))
-    app.add_handler(CommandHandler("pantaupenuhbot", start))
-    app.add_handler(CommandHandler("scanbot", start))
-    app.add_handler(CommandHandler("pantaupantau", start))
-    app.add_handler(CommandHandler("scankini", start))
-    app.add_handler(CommandHandler("layakpantau", start))
-    app.add_handler(CommandHandler("monitorsemua", start))
-    app.add_handler(CommandHandler("cekpantauentry", start))
-    app.add_handler(CommandHandler("pantauentrylayak", start))
-    app.add_handler(CommandHandler("tokenlayak", start))
-    app.add_handler(CommandHandler("entrylayak", start))
-    app.add_handler(CommandHandler("monitorlayak", start))
-    app.add_handler(CommandHandler("cekstrategientry", start))
-    app.add_handler(CommandHandler("pantautokenlayakentry", start))
-
     app.add_handler(CommandHandler("telegram", button_handler))
-
     app.run_polling()

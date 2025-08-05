@@ -26,7 +26,7 @@ STRATEGIES = {
 TF_INTERVALS = {
     "TF15": "15m",
     "TF1h": "1h",
-    "TF3h": "4h",
+    "TF4h": "4h",
     "TF1d": "1d"
 }
 
@@ -86,9 +86,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ema_pct = strategy["ema_pct"]
     volume_min = strategy["volume_min"]
 
-    await update.message.reply_text(f"🔍 Scan {label.upper()} sedang berjalan...")
-
-    results = {}
+    results = []
 
     for pair in PAIRS:
         price = get_price(pair)
@@ -97,34 +95,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
         valid_tfs = []
-        best_rsi, best_ema21, best_ema99 = -1, -1, -1
+        rsi_cache = {}
+        ema21_cache = {}
 
         for tf_label, tf_interval in TF_INTERVALS.items():
             rsi, ema21, ema99 = get_ema_rsi(pair, tf_interval)
             if -1 in (rsi, ema21, ema99):
                 continue
             if price < ema21 and price > ema_pct * ema99 and rsi < rsi_limit:
-                valid_tfs.append(tf_label.replace("TF", ""))
-                best_rsi, best_ema21, best_ema99 = rsi, ema21, ema99
+                valid_tfs.append(tf_label)
+                rsi_cache[tf_label] = rsi
+                ema21_cache[tf_label] = ema21
 
-        if valid_tfs:
+        if len(valid_tfs) >= 3:
+            tf_str = ", ".join(valid_tfs)
+            tf_checks = " ".join(["✔️" for _ in valid_tfs])
+            tf_note = f"Note: Valid di {tf_str} {tf_checks}"
+            tf_main = valid_tfs[0]
+            rsi_val = rsi_cache[tf_main]
+            ema_val = ema21_cache[tf_main]
+
             tp1 = round(price * (1 + tp1_pct / 100), 4)
             tp2 = round(price * (1 + tp2_pct / 100), 4)
-            note = f"Note: Valid di TF{', TF'.join(valid_tfs)} {'✔️' * len(valid_tfs)}"
+
             msg = (
-                f"🟢 {label} Mode • TF{valid_tfs[0]}\n\n"
+                f"{text} Mode • {tf_main}\n\n"
                 f"✅ {pair}\n"
-                f"Harga = ${price:.3f} | EMA21 = ${best_ema21:.3f} | RSI = {best_rsi}\n"
+                f"Harga = ${price:.3f} | EMA21 = ${ema_val:.3f} | RSI = {rsi_val}\n"
                 f"📈 Volume: ${volume:,.0f}\n\n"
                 f"🎯 Entry: ${price:.3f}\n"
                 f"🎯 TP1: ${tp1} (+{tp1_pct}%)\n"
                 f"🎯 TP2: ${tp2} (+{tp2_pct}%)\n\n"
-                f"{note}"
+                f"{tf_note}"
             )
-            results[pair] = msg
+            results.append(msg)
 
     if results:
-        for msg in results.values():
+        for msg in results:
             await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
     else:

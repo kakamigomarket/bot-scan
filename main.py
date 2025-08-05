@@ -103,8 +103,7 @@ async def scan_strategy(update: Update, context: ContextTypes.DEFAULT_TYPE, stra
     if update.effective_user.id not in ALLOWED_USERS:
         return
 
-    await update.message.reply_text(f"🔍 Mendeteksi sinyal strategi *{strategy.upper()}*...
-Tunggu sebentar...", parse_mode="Markdown")
+    await update.message.reply_text(f"🔍 Mendeteksi sinyal strategi *{strategy.upper()}*...\nTunggu sebentar...", parse_mode="Markdown")
 
     results = []
     for pair in PAIRS:

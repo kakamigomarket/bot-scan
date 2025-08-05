@@ -79,6 +79,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Perintah tidak dikenali.")
         return
 
+    await update.message.reply_text(f"🔍 Sedang memindai sinyal untuk strategi *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")
+
     label = strategy["label"]
     tp1_pct = strategy["tp1_pct"]
     tp2_pct = strategy["tp2_pct"]
@@ -134,6 +136,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for msg in results:
             await update.message.reply_text(msg)
             await asyncio.sleep(0.5)
+        await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak sudah ditampilkan.*", parse_mode="Markdown")
     else:
         await update.message.reply_text("⚠️ Tidak ada sinyal strategi yang layak saat ini.")
 

@@ -203,7 +203,7 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
             msg += "🧬 MACD Cross: Bearish\n"
 
         return msg
-    except Exception as e:
+    except:
         return None
 
 # ==================== BOT HANDLER ====================
@@ -221,7 +221,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
-     elif text == "2️⃣ Info":
+    elif text == "2️⃣ Info":
         msg = """
 🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.
 

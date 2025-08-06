@@ -224,9 +224,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "2️⃣ Info":
         await update.message.reply_text(
             "🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.\n\n"
-            "🔴 Jemput Bola → Entry Koin oversold, Strategi akumulasi saat koreksi dalam.\n"
-            "🟡 Rebound Swing → Swing pendek, Momentum reversal ringan. Untuk rotasi swing harian.\n"
-            "🟢 Scalping Breakout → Tangkap awal breakout. Untuk scalping cepat.\n\n"
+            "SARAN\n\n"
+            "🔴 Jemput Bola (Oversold / Akumulasi)
+⏰ Pagi: 07.30–08.30 WIB
+-Pas banget setelah sesi malam Amerika berakhir
+-Banyak koin dalam kondisi koreksi atau baru rebound
+-Ideal untuk menangkap harga bawah\n"
+            "🟡 Rebound Swing (Momentum Balik Arah)
+⏰ Siang – Sore: 12.00–15.00 WIB
+-Waktu tenang antara sesi Asia & Eropa
+-Ideal untuk pantau reversal awal, sinyal mulai muncul
+-Cocok buat swing trader yang ingin hold 1–2 hari\n"
+            "🟢 Scalping Breakout (Momentum Cepat)
+⏰ Malam: 19.00–22.00 WIB
+-Awal pembukaan sesi US → banyak breakout terjadi
+-Volume besar masuk
+-Ideal untuk scalping cepat atau jual besok pagi\n\n"
             "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
         )
         await update.message.reply_text(msg)

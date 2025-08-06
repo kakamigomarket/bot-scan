@@ -4,18 +4,19 @@ import asyncio
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ENV
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
+# PAIRS
 PAIRS = [
     "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT", "CRVUSDT", "ENSUSDT",
     "FORMUSDT", "TAOUSDT", "ALGOUSDT", "XTZUSDT", "CAKEUSDT", "HBARUSDT", "NEXOUSDT",
     "GALAUSDT", "IOTAUSDT", "THETAUSDT", "CFXUSDT", "WIFUSDT", "BTCUSDT", "ETHUSDT",
     "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
     "AAVEUSDT", "ATOMUSDT", "INJUSDT", "QNTUSDT", "ARBUSDT", "NEARUSDT", "SUIUSDT",
-    "LDOUSDT", "WLDUSDT", "FETUSDT", "GRTUSDT", "PYTHUSDT", "ASRUSDT", "HYPERUSDT",
-    "TRXUSDT"
+    "LDOUSDT", "WLDUSDT", "FETUSDT", "GRTUSDT", "PYTHUSDT", "ASRUSDT", "HYPERUSDT", "TRXUSDT"
 ]
 
 STRATEGIES = {
@@ -30,6 +31,9 @@ TF_INTERVALS = {
     "TF4h": "4h",
     "TF1d": "1d"
 }
+
+# === INDICATOR & STRATEGY FUNCTIONS ===
+
 def get_price(symbol: str) -> float:
     try:
         res = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10)
@@ -45,7 +49,6 @@ def get_volume(symbol: str) -> float:
         return 0
 
 def detect_candle_pattern(opens, closes, highs, lows):
-    # Simple pattern: Hammer, Engulfing, Doji, Morning Star
     last_open = opens[-1]
     last_close = closes[-1]
     last_high = highs[-1]
@@ -59,18 +62,12 @@ def detect_candle_pattern(opens, closes, highs, lows):
     upper_wick = last_high - max(last_open, last_close)
     lower_wick = min(last_open, last_close) - last_low
 
-    # Doji
     if body <= 0.1 * candle_range:
         return "Doji"
-
-    # Hammer
     if lower_wick > 2 * body and upper_wick < body:
         return "Hammer"
-
-    # Bullish Engulfing
     if closes[-2] < opens[-2] and last_close > last_open and last_close > opens[-2] and last_open < closes[-2]:
         return "Engulfing"
-
     return ""
 
 def detect_divergence(prices, rsis):
@@ -103,9 +100,29 @@ def is_volume_spike(volumes):
     avg_volume = sum(volumes[-20:-1]) / 19
     return volumes[-1] > 1.5 * avg_volume
 
+def calculate_macd(closes):
+    ema12 = [sum(closes[i-11:i+1])/12 for i in range(11, len(closes))]
+    ema26 = [sum(closes[i-25:i+1])/26 for i in range(25, len(closes))]
+    macd_line = [e12 - e26 for e12, e26 in zip(ema12[-len(ema26):], ema26)]
+    signal_line = [sum(macd_line[i-8:i+1])/9 for i in range(8, len(macd_line))]
+    histogram = [m - s for m, s in zip(macd_line[-len(signal_line):], signal_line)]
+    return histogram[-1] if histogram else 0
+
+def trend_strength(closes, volumes):
+    ema_short = sum(closes[-10:]) / 10
+    ema_long = sum(closes[-30:]) / 30
+    slope = ema_short - ema_long
+    avg_vol = sum(volumes[-20:]) / 20
+    vol_boost = volumes[-1] > 1.2 * avg_vol
+    if slope > 0 and vol_boost:
+        return "Uptrend 🔼"
+    elif slope < 0 and vol_boost:
+        return "Downtrend 🔽"
+    else:
+        return "Sideways ⏸️"
+
 def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
     try:
-        # Fetch data
         res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={tf_interval}&limit=100", timeout=10)
         data = res.json()
         closes = [float(k[4]) for k in data]
@@ -113,11 +130,9 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         lows = [float(k[3]) for k in data]
         opens = [float(k[1]) for k in data]
         volumes = [float(k[5]) for k in data]
+        if len(closes) < 100: return None
 
-        if len(closes) < 100:
-            return None
-
-        # RSI(6)
+        # === Indicators
         rsi_len = 6
         deltas = [closes[i+1] - closes[i] for i in range(-rsi_len-1, -1)]
         gains = [d if d > 0 else 0 for d in deltas]
@@ -126,14 +141,13 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         avg_loss = sum(losses) / rsi_len
         rs = avg_gain / avg_loss if avg_loss != 0 else 100
         rsi = round(100 - (100 / (1 + rs)), 2)
-
         ema7 = sum(closes[-7:]) / 7
         ema25 = sum(closes[-25:]) / 25
         ema99 = sum(closes[-99:]) / 99
         tr = [highs[i] - lows[i] for i in range(-14, 0)]
         atr = sum(tr) / 14
 
-        # Logika strategi utama
+        # === Strategy Entry Logic
         is_valid = False
         if strategy == "🔴 Jemput Bola":
             is_valid = price < ema25 and price > 0.9 * ema99 and rsi < 40
@@ -141,24 +155,23 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
             is_valid = price < ema25 and price > ema7 and rsi < 50
         elif strategy == "🟢 Scalping Breakout":
             is_valid = price > ema7 and price > ema25 and price > ema99 and rsi >= 60
-
         if not is_valid:
             return None
 
-        # Tambahan PRO
+        # === Pro Analysis
         candle = detect_candle_pattern(opens, closes, highs, lows)
-        divergence = detect_divergence(closes, [rsi] * len(closes))  # optional simplification
+        divergence = detect_divergence(closes, [rsi] * len(closes))
         support_zone = proximity_to_support_resistance(closes)
         volume_spike = is_volume_spike(volumes)
         support_warning = price < 0.985 * ema25 and price < 0.97 * ema7
-
-        # TP Dinamis pakai ATR
         tp1 = round(price + atr * 1.0, 4)
         tp2 = round(price + atr * 1.8, 4)
         tp1_pct = round((tp1 - price) / price * 100, 2)
         tp2_pct = round((tp2 - price) / price * 100, 2)
+        trend = trend_strength(closes, volumes)
+        macd_hist = calculate_macd(closes)
 
-        # Confidence Score
+        # === Confidence Score
         score = 0
         if candle: score += 1
         if "Divergence" in divergence: score += 1
@@ -167,39 +180,38 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         if not support_warning: score += 1
         label_score = f"🎯 Confidence Score: {score}/5"
 
-        # Format output
+        # === Output Message
         msg = (
-            f"{strategy} Mode • {tf_interval}\n\n"
+            f"{strategy} • {tf_interval}\n\n"
             f"✅ {symbol}\n"
             f"Harga: ${price:.3f}\n"
             f"EMA7: {ema7:.3f} | EMA25: {ema25:.3f} | EMA99: {ema99:.3f}\n"
-            f"RSI(6): {rsi} | ATR(14): {atr:.4f}\n"
+            f"RSI(6): {rsi} | ATR: {atr:.4f}\n"
             f"📈 Volume: ${volume:,.0f}\n\n"
             f"🎯 Entry: ${price:.3f}\n"
             f"🎯 TP1: ${tp1} (+{tp1_pct}%)\n"
             f"🎯 TP2: ${tp2} (+{tp2_pct}%)\n\n"
             f"{label_score}\n"
         )
-        if candle:
-            msg += f"📌 Pattern: {candle}\n"
-        if divergence:
-            msg += f"{divergence}\n"
-        if support_zone:
-            msg += f"📍 {support_zone}\n"
-        if volume_spike:
-            msg += "💥 Volume Spike\n"
-        if support_warning:
-            msg += "⚠️ *Waspada! Support patah*\n"
-
+        if candle: msg += f"📌 Pattern: {candle}\n"
+        if divergence: msg += f"{divergence}\n"
+        if support_zone: msg += f"📍 {support_zone}\n"
+        if volume_spike: msg += "💥 Volume Spike\n"
+        if support_warning: msg += "⚠️ *Waspada! Support patah*\n"
+        msg += f"📊 Trend: {trend}\n"
+        if macd_hist > 0:
+            msg += "🧬 MACD Cross: Bullish\n"
+        elif macd_hist < 0:
+            msg += "🧬 MACD Cross: Bearish\n"
         return msg
-    except Exception as e:
+    except:
         return None
+
+# === HANDLERS ===
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
-
+    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -214,24 +226,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == "2️⃣ Info":
-        msg = (
-            "Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.\n"
-            "Setiap mode strategi punya gaya entry berbeda:\n\n"
-            "🔴 Jemput Bola\nToken oversold. Strategi akumulasi saat koreksi dalam.\n\n"
-            "🟡 Rebound Swing\nMomentum reversal ringan. Untuk rotasi swing harian.\n\n"
-            "🟢 Scalping Breakout\nTangkap awal breakout. Untuk scalping cepat.\n\n"
-            "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
+        await update.message.reply_text(
+            "🔹 Pilih strategi & analisa otomatis semua koin.\n\n"
+            "🔴 Jemput Bola → Entry oversold\n"
+            "🟡 Rebound Swing → Swing pendek\n"
+            "🟢 Scalping Breakout → Breakout awal\n\n"
+            "⚠️ Gunakan secara bijak. Bukan nasihat keuangan."
         )
-        await update.message.reply_text(msg)
         return
 
     elif text == "3️⃣ Help":
-        msg = (
-            "Bot scan harga crypto spot Binance real-time.\n"
-            "Cocok untuk trader berbasis EMA, RSI, dan Volume.\n\n"
-            "Hubungi @KikioOreo untuk aktivasi akses penuh."
-        )
-        await update.message.reply_text(msg)
+        await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi dan panduan.")
         return
 
     elif text == "🔙 Kembali ke Menu Utama":
@@ -253,11 +258,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if price == -1 or volume < strategy["volume_min"]:
                 continue
 
+            valid_msgs = []
             for tf_label, tf_interval in TF_INTERVALS.items():
                 msg = analisa_strategi_pro(pair, text, price, volume, tf_interval)
                 if msg:
-                    results.append(msg)
-                    break  # tampilkan 1 per pair (TF terbaik)
+                    valid_msgs.append(msg)
+
+            if len(valid_msgs) >= 2:
+                results.append(valid_msgs[0])
 
         if results:
             for msg in results:
@@ -266,10 +274,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak sudah ditampilkan.*", parse_mode="Markdown")
         else:
             await update.message.reply_text("⚠️ Tidak ada sinyal strategi yang layak saat ini.")
-        return
-
     else:
         await update.message.reply_text("⛔ Perintah tidak dikenali.")
+
+# === MAIN ===
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()

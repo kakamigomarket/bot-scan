@@ -222,36 +222,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == "2️⃣ Info":
-        await update.message.reply_text(
-            "🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.\n\n"
-            "SARAN\n\n"
-            "🔴 Jemput Bola (Oversold / Akumulasi)
+    msg = """
+🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.
+
+📌 SARAN WAKTU IDEAL
+
+🔴 Jemput Bola (Oversold / Akumulasi)
 ⏰ Pagi: 07.30–08.30 WIB
--Pas banget setelah sesi malam Amerika berakhir
--Banyak koin dalam kondisi koreksi atau baru rebound
--Ideal untuk menangkap harga bawah\n"
-            "🟡 Rebound Swing (Momentum Balik Arah)
+• Pas banget setelah sesi malam Amerika berakhir
+• Banyak koin dalam kondisi koreksi atau baru rebound
+• Ideal untuk menangkap harga bawah
+
+🟡 Rebound Swing (Momentum Balik Arah)
 ⏰ Siang – Sore: 12.00–15.00 WIB
--Waktu tenang antara sesi Asia & Eropa
--Ideal untuk pantau reversal awal, sinyal mulai muncul
--Cocok buat swing trader yang ingin hold 1–2 hari\n"
-            "🟢 Scalping Breakout (Momentum Cepat)
+• Waktu tenang antara sesi Asia & Eropa
+• Ideal untuk pantau reversal awal, sinyal mulai muncul
+• Cocok buat swing trader yang ingin hold 1–2 hari
+
+🟢 Scalping Breakout (Momentum Cepat)
 ⏰ Malam: 19.00–22.00 WIB
--Awal pembukaan sesi US → banyak breakout terjadi
--Volume besar masuk
--Ideal untuk scalping cepat atau jual besok pagi\n\n"
-            "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
-        )
-        await update.message.reply_text(msg)
-        return
+• Awal pembukaan sesi US → banyak breakout terjadi
+• Volume besar masuk
+• Ideal untuk scalping cepat atau jual besok pagi
 
-    elif text == "3️⃣ Help":
-        await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi akses penuh dan panduan.")
-        return
-
-    elif text == "🔙 Kembali ke Menu Utama":
-        await start(update, context)
-        return
+⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR.
+"""
+    await update.message.reply_text(msg)
+    return
 
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:

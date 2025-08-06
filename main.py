@@ -221,7 +221,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
-        elif text == "2️⃣ Info":
+        if text == "2️⃣ Info":
         msg = """
 🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.
 

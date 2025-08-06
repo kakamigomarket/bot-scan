@@ -30,7 +30,6 @@ TF_INTERVALS = {
     "TF4h": "4h",
     "TF1d": "1d"
 }
-
 def get_price(symbol: str) -> float:
     try:
         res = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10)
@@ -45,16 +44,78 @@ def get_volume(symbol: str) -> float:
     except:
         return 0
 
-def get_indicators(symbol: str, interval: str):
+def detect_candle_pattern(opens, closes, highs, lows):
+    # Simple pattern: Hammer, Engulfing, Doji, Morning Star
+    last_open = opens[-1]
+    last_close = closes[-1]
+    last_high = highs[-1]
+    last_low = lows[-1]
+    body = abs(last_close - last_open)
+    candle_range = last_high - last_low
+
+    if candle_range == 0:
+        return ""
+
+    upper_wick = last_high - max(last_open, last_close)
+    lower_wick = min(last_open, last_close) - last_low
+
+    # Doji
+    if body <= 0.1 * candle_range:
+        return "Doji"
+
+    # Hammer
+    if lower_wick > 2 * body and upper_wick < body:
+        return "Hammer"
+
+    # Bullish Engulfing
+    if closes[-2] < opens[-2] and last_close > last_open and last_close > opens[-2] and last_open < closes[-2]:
+        return "Engulfing"
+
+    return ""
+
+def detect_divergence(prices, rsis):
+    if len(prices) < 5 or len(rsis) < 5:
+        return ""
+    p1, p2 = prices[-5], prices[-1]
+    r1, r2 = rsis[-5], rsis[-1]
+    if p2 > p1 and r2 < r1:
+        return "🔻 Bearish Divergence"
+    elif p2 < p1 and r2 > r1:
+        return "🔺 Bullish Divergence"
+    else:
+        return ""
+
+def proximity_to_support_resistance(closes):
+    recent = closes[-10:]
+    support = min(recent)
+    resistance = max(recent)
+    price = closes[-1]
+    distance_support = (price - support) / support * 100
+    distance_resistance = (resistance - price) / resistance * 100
+    if distance_support < 2:
+        return "Dekat Support"
+    elif distance_resistance < 2:
+        return "Dekat Resistance"
+    else:
+        return ""
+
+def is_volume_spike(volumes):
+    avg_volume = sum(volumes[-20:-1]) / 19
+    return volumes[-1] > 1.5 * avg_volume
+
+def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
     try:
-        res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=100", timeout=10)
+        # Fetch data
+        res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={tf_interval}&limit=100", timeout=10)
         data = res.json()
         closes = [float(k[4]) for k in data]
         highs = [float(k[2]) for k in data]
         lows = [float(k[3]) for k in data]
+        opens = [float(k[1]) for k in data]
+        volumes = [float(k[5]) for k in data]
 
         if len(closes) < 100:
-            return -1, -1, -1, -1, -1, [], []
+            return None
 
         # RSI(6)
         rsi_len = 6
@@ -69,30 +130,70 @@ def get_indicators(symbol: str, interval: str):
         ema7 = sum(closes[-7:]) / 7
         ema25 = sum(closes[-25:]) / 25
         ema99 = sum(closes[-99:]) / 99
-
         tr = [highs[i] - lows[i] for i in range(-14, 0)]
         atr = sum(tr) / 14
 
-        return rsi, round(ema7, 4), round(ema25, 4), round(ema99, 4), round(atr, 4), closes[-15:], closes[-15:]
-    except:
-        return -1, -1, -1, -1, -1, [], []
+        # Logika strategi utama
+        is_valid = False
+        if strategy == "🔴 Jemput Bola":
+            is_valid = price < ema25 and price > 0.9 * ema99 and rsi < 40
+        elif strategy == "🟡 Rebound Swing":
+            is_valid = price < ema25 and price > ema7 and rsi < 50
+        elif strategy == "🟢 Scalping Breakout":
+            is_valid = price > ema7 and price > ema25 and price > ema99 and rsi >= 60
 
-def detect_divergence(prices, rsis):
-    if len(prices) < 5 or len(rsis) < 5:
-        return "–"
-    low1, low2 = prices[-5], prices[-1]
-    rsi1, rsi2 = rsis[-5], rsis[-1]
+        if not is_valid:
+            return None
 
-    if low2 < low1 and rsi2 > rsi1:
-        return "Bullish Div ✅"
-    elif low2 > low1 and rsi2 < rsi1:
-        return "Bearish Div ⚠️"
-    return "–"
+        # Tambahan PRO
+        candle = detect_candle_pattern(opens, closes, highs, lows)
+        divergence = detect_divergence(closes, [rsi] * len(closes))  # optional simplification
+        support_zone = proximity_to_support_resistance(closes)
+        volume_spike = is_volume_spike(volumes)
+        support_warning = price < 0.985 * ema25 and price < 0.97 * ema7
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
+        # TP Dinamis pakai ATR
+        tp1 = round(price + atr * 1.0, 4)
+        tp2 = round(price + atr * 1.8, 4)
+        tp1_pct = round((tp1 - price) / price * 100, 2)
+        tp2_pct = round((tp2 - price) / price * 100, 2)
+
+        # Confidence Score
+        score = 0
+        if candle: score += 1
+        if "Divergence" in divergence: score += 1
+        if "Dekat" in support_zone: score += 1
+        if volume_spike: score += 1
+        if not support_warning: score += 1
+        label_score = f"🎯 Confidence Score: {score}/5"
+
+        # Format output
+        msg = (
+            f"{strategy} Mode • {tf_interval}\n\n"
+            f"✅ {symbol}\n"
+            f"Harga: ${price:.3f}\n"
+            f"EMA7: {ema7:.3f} | EMA25: {ema25:.3f} | EMA99: {ema99:.3f}\n"
+            f"RSI(6): {rsi} | ATR(14): {atr:.4f}\n"
+            f"📈 Volume: ${volume:,.0f}\n\n"
+            f"🎯 Entry: ${price:.3f}\n"
+            f"🎯 TP1: ${tp1} (+{tp1_pct}%)\n"
+            f"🎯 TP2: ${tp2} (+{tp2_pct}%)\n\n"
+            f"{label_score}\n"
+        )
+        if candle:
+            msg += f"📌 Pattern: {candle}\n"
+        if divergence:
+            msg += f"{divergence}\n"
+        if support_zone:
+            msg += f"📍 {support_zone}\n"
+        if volume_spike:
+            msg += "💥 Volume Spike\n"
+        if support_warning:
+            msg += "⚠️ *Waspada! Support patah*\n"
+
+        return msg
+    except Exception as e:
+        return None
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -103,8 +204,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"],
             ["🔙 Kembali ke Menu Utama"]
         ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=reply_markup)
+        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
     elif text == "2️⃣ Info":
@@ -147,57 +247,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if price == -1 or volume < strategy["volume_min"]:
                 continue
 
-            valid_tfs = []
-            tf_data = {}
-
             for tf_label, tf_interval in TF_INTERVALS.items():
-                rsi, ema7, ema25, ema99, atr, closes, rsis = get_indicators(pair, tf_interval)
-                if -1 in (rsi, ema7, ema25, ema99, atr):
-                    continue
-
-                is_valid = False
-                if text == "🔴 Jemput Bola":
-                    is_valid = price < ema25 and price > 0.9 * ema99 and rsi < 40
-                elif text == "🟡 Rebound Swing":
-                    is_valid = price < ema25 and price > ema7 and rsi < 50
-                elif text == "🟢 Scalping Breakout":
-                    is_valid = price > ema7 and price > ema25 and price > ema99 and rsi >= 60
-
-                if is_valid:
-                    valid_tfs.append(tf_label)
-                    tf_data[tf_label] = (rsi, ema7, ema25, ema99, atr, closes, rsis)
-
-            if len(valid_tfs) >= 3:
-                tf_main = valid_tfs[0]
-                rsi_val, ema7_val, ema25_val, ema99_val, atr, closes, rsis = tf_data[tf_main]
-                tp1 = round(price + atr * 1.0, 4)
-                tp2 = round(price + atr * 1.8, 4)
-                pct1 = round((tp1 - price) / price * 100, 2)
-                pct2 = round((tp2 - price) / price * 100, 2)
-
-                divergence = detect_divergence(closes, rsis)
-                warning = "\n⚠️ *Waspada! Support patah*" if price < 0.985 * ema25 and price < 0.97 * ema7 else ""
-
-                strength = "Strong ✅" if len(valid_tfs) >= 4 and rsi_val < strategy["rsi_limit"] else "Medium ⚠️" if len(valid_tfs) == 3 else "Weak ❌"
-
-                msg = (
-                    f"{text} Mode • {tf_main} • {strength}\n\n"
-                    f"✅ {pair}\n"
-                    f"Harga: ${price:.3f}\n"
-                    f"EMA7: ${ema7_val:.3f} | EMA25: ${ema25_val:.3f} | EMA99: ${ema99_val:.3f}\n"
-                    f"RSI(6): {rsi_val} | ATR: {atr} | {divergence}\n"
-                    f"📈 Volume: ${volume:,.0f}\n\n"
-                    f"🎯 Entry: ${price:.3f}\n"
-                    f"🎯 TP1: ${tp1} (+{pct1}%)\n"
-                    f"🎯 TP2: ${tp2} (+{pct2}%)\n\n"
-                    f"Note: Valid di {', '.join(valid_tfs)} {'✔️'*len(valid_tfs)}{warning}"
-                )
-                results.append(msg)
+                msg = analisa_strategi_pro(pair, text, price, volume, tf_interval)
+                if msg:
+                    results.append(msg)
+                    break  # tampilkan 1 per pair (TF terbaik)
 
         if results:
             for msg in results:
                 await update.message.reply_text(msg, parse_mode="Markdown")
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.5)
             await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak sudah ditampilkan.*", parse_mode="Markdown")
         else:
             await update.message.reply_text("⚠️ Tidak ada sinyal strategi yang layak saat ini.")

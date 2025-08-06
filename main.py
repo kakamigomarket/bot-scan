@@ -208,10 +208,6 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
 
 # ==================== BOT HANDLER ====================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
-    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -250,10 +246,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
-      elif text == "3️⃣ Help":
+    elif text == "3️⃣ Help":
         await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi akses penuh dan panduan.")
         return
-
+        
     elif text == "🔙 Kembali ke Menu Utama":
         await start(update, context)
         return   

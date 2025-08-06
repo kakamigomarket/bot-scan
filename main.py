@@ -227,16 +227,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text == "2️⃣ Info":
         await update.message.reply_text(
-            "🔹 Pilih strategi & analisa otomatis semua koin.\n\n"
-            "🔴 Jemput Bola → Entry oversold\n"
-            "🟡 Rebound Swing → Swing pendek\n"
-            "🟢 Scalping Breakout → Breakout awal\n\n"
-            "⚠️ Gunakan secara bijak. Bukan nasihat keuangan."
+            "🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.\n\n"
+            "🔴 Jemput Bola → Entry Koin oversold, Strategi akumulasi saat koreksi dalam.\n"
+            "🟡 Rebound Swing → Swing pendek, Momentum reversal ringan. Untuk rotasi swing harian.\n"
+            "🟢 Scalping Breakout → Tangkap awal breakout. Untuk scalping cepat.\n\n"
+            "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
         )
         return
 
     elif text == "3️⃣ Help":
-        await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi dan panduan.")
+        await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi akses penuh dan panduan.")
         return
 
     elif text == "🔙 Kembali ke Menu Utama":

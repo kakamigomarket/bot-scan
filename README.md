@@ -1,5 +1,6 @@
 # bot-scan
 ✅ STATUS BOT SAAT INI — Versi PRO Aktif
+
 🔧 Indikator Utama Aktif:
 
 EMA7, EMA25, EMA99

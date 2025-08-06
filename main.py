@@ -250,6 +250,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
+      elif text == "3️⃣ Help":
+        await update.message.reply_text("Hubungi @KikioOreo untuk aktivasi akses penuh dan panduan.")
+        return
+
+    elif text == "🔙 Kembali ke Menu Utama":
+        await start(update, context)
+        return   
+
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:
             await update.message.reply_text("⛔ Akses ditolak.")

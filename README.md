@@ -3,15 +3,13 @@
 
 🔧 Indikator Utama Aktif:
 
-EMA7, EMA25, EMA99
+✅ EMA7, EMA25, EMA99
 
-RSI(6), ATR(14)
+✅ RSI(6), ATR(14)
 
-Candlestick Reversal, Volume Spike
+✅ Candlestick Reversal, Volume Spike
 
-Support & Resistance proximity
-
-🎯 Fitur Pro Tahap 1–3 Aktif:
+✅ Support & Resistance proximity
 
 ✅ Confidence Score 0–5
 

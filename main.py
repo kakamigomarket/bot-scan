@@ -19,9 +19,9 @@ PAIRS = [
 ]
 
 STRATEGIES = {
-    "🔴 Jemput Bola": {"label": "Jemput Bola", "tp1_pct": 7, "tp2_pct": 12, "rsi_limit": 40, "volume_min": 2_000_000},
-    "🟡 Rebound Swing": {"label": "Rebound Swing", "tp1_pct": 5, "tp2_pct": 9, "rsi_limit": 50, "volume_min": 3_000_000},
-    "🟢 Scalping Breakout": {"label": "Scalping Breakout", "tp1_pct": 3, "tp2_pct": 6, "rsi_limit": 60, "volume_min": 5_000_000}
+    "🔴 Jemput Bola": {"rsi_limit": 40, "volume_min": 2_000_000},
+    "🟡 Rebound Swing": {"rsi_limit": 50, "volume_min": 3_000_000},
+    "🟢 Scalping Breakout": {"rsi_limit": 60, "volume_min": 5_000_000}
 }
 
 TF_INTERVALS = {
@@ -45,33 +45,42 @@ def get_volume(symbol: str) -> float:
     except:
         return 0
 
-def get_indicators(symbol: str, interval: str) -> tuple:
+def get_indicators(symbol: str, interval: str):
     try:
         res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=100", timeout=10)
         data = res.json()
         closes = [float(k[4]) for k in data]
-        if len(closes) < 100:
-            return -1, -1, -1, -1
+        highs = [float(k[2]) for k in data]
+        lows = [float(k[3]) for k in data]
 
-        rsi_length = 6
-        deltas = [closes[i+1] - closes[i] for i in range(-rsi_length-1, -1)]
+        if len(closes) < 100:
+            return -1, -1, -1, -1, -1
+
+        # RSI(6)
+        rsi_len = 6
+        deltas = [closes[i+1] - closes[i] for i in range(-rsi_len-1, -1)]
         gains = [d if d > 0 else 0 for d in deltas]
         losses = [-d if d < 0 else 0 for d in deltas]
-        avg_gain = sum(gains) / rsi_length
-        avg_loss = sum(losses) / rsi_length
+        avg_gain = sum(gains) / rsi_len
+        avg_loss = sum(losses) / rsi_len
         rs = avg_gain / avg_loss if avg_loss != 0 else 100
         rsi = round(100 - (100 / (1 + rs)), 2)
 
+        # EMA
         ema7 = sum(closes[-7:]) / 7
         ema25 = sum(closes[-25:]) / 25
         ema99 = sum(closes[-99:]) / 99
 
-        return rsi, round(ema7, 4), round(ema25, 4), round(ema99, 4)
+        # ATR(14)
+        tr = [highs[i] - lows[i] for i in range(-14, 0)]
+        atr = sum(tr) / 14
+
+        return rsi, round(ema7, 4), round(ema25, 4), round(ema99, 4), round(atr, 4)
     except:
-        return -1, -1, -1, -1
+        return -1, -1, -1, -1, -1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
+   keyboard = [["#️⃣ Trading Spot"], ["*️⃣ Info"], ["*️⃣ Help"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
 
@@ -79,31 +88,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if text == "1️⃣ Trading Spot":
+    if text == "#️⃣ Trading Spot":
         keyboard = [
-            ["🔴 Jemput Bola"],
-            ["🟡 Rebound Swing"],
-            ["🟢 Scalping Breakout"],
+            ["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"],
             ["🔙 Kembali ke Menu Utama"]
         ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text("📊 Pilih Mode Strategi Trading Spot:", reply_markup=reply_markup)
+        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
-    elif text == "2️⃣ Info":
+    elif text == "*️⃣ Info":
         msg = (
-            "🔴 Jemput Bola\nFokus pada token oversold. ✅ Untuk strategi akumulasi cepat saat koreksi dalam.\n\n"
-            "🟡 Rebound Swing\nIdeal untuk momentum reversal ringan. ✅ Untuk strategi rotasi swing harian.\n\n"
-            "🟢 Scalping Breakout\nCocok menangkap awal breakout. ✅ Untuk scalping cepat berbasis volume & momentum."
+            "Klik Tombol Trading Spot, maka BOT otomatis menganalisa dan memberikan signal untuk koin yang memiliki potensi layak entry\n\n"
+            "setiap mode strategi memiliki gaya Trading berbeda sehingga sesuaikan kebutuhan anda\n\n"
+            "🔴 Jemput Bola\nToken oversold. ✅ Strategi akumulasi saat koreksi dalam.\n\n"
+            "🟡 Rebound Swing\nMomentum reversal ringan. ✅ Untuk rotasi swing harian.\n\n"
+            "🟢 Scalping Breakout\nTangkap awal breakout. ✅ Scalping cepat volume tinggi."
+             "Disclaimer. BOT ini bukan penasehat keuangan, gunakan secara bijak dan tentu nya tetap DYOR"\n\n"
         )
         await update.message.reply_text(msg)
         return
 
-    elif text == "3️⃣ Help":
+    elif text == "*️⃣ Help":
         msg = (
-            "Bot ini membantu scan harga crypto spot Binance secara real-time.\n"
-            "Dirancang untuk trader yang ingin cuan efisien.\n\n"
-            "Aktivasi bot hubungi @KikioOreo"
+            "Bot scan harga crypto spot Binance real-time.\n"
+            "Cocok untuk trader berbasis strategi EMA & RSI.\n\n"
+            "Hubungi @KikioOreo untuk aktivasi akses penuh."
         )
         await update.message.reply_text(msg)
         return
@@ -113,13 +122,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:
-            await update.message.reply_text("⛔ Akses ditolak. Silakan hubungi admin.")
+            await update.message.reply_text("⛔ Akses ditolak. Silakan hubungi admin. klik Tombol Help untuk Bantuan")
             return
 
-        strategy = STRATEGIES[text]
         await update.message.reply_text(f"🔍 Memindai sinyal untuk *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")
-
+        strategy = STRATEGIES[text]
         results = []
+
         for pair in PAIRS:
             price = get_price(pair)
             volume = get_volume(pair)
@@ -127,11 +136,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             valid_tfs = []
-            indicator_cache = {}
+            tf_data = {}
 
             for tf_label, tf_interval in TF_INTERVALS.items():
-                rsi, ema7, ema25, ema99 = get_indicators(pair, tf_interval)
-                if -1 in (rsi, ema7, ema25, ema99):
+                rsi, ema7, ema25, ema99, atr = get_indicators(pair, tf_interval)
+                if -1 in (rsi, ema7, ema25, ema99, atr):
                     continue
 
                 is_valid = False
@@ -144,32 +153,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if is_valid:
                     valid_tfs.append(tf_label)
-                    indicator_cache[tf_label] = (rsi, ema7, ema25, ema99)
+                    tf_data[tf_label] = (rsi, ema7, ema25, ema99, atr)
 
             if len(valid_tfs) >= 3:
                 tf_main = valid_tfs[0]
-                rsi_val, ema7_val, ema25_val, ema99_val = indicator_cache[tf_main]
-                tp1 = round(price * (1 + strategy["tp1_pct"] / 100), 4)
-                tp2 = round(price * (1 + strategy["tp2_pct"] / 100), 4)
-                note = f"Note: Valid di {', '.join(valid_tfs)} {'✔️'*len(valid_tfs)}"
+                rsi_val, ema7_val, ema25_val, ema99_val, atr = tf_data[tf_main]
+                tp1 = round(price + atr * 1.0, 4)
+                tp2 = round(price + atr * 1.8, 4)
+                warning = ""
+                if price < 0.985 * ema25 and price < 0.97 * ema7:
+                    warning = "\n⚠️ *Waspada! Support patah*"
 
                 msg = (
                     f"{text} Mode • {tf_main}\n\n"
                     f"✅ {pair}\n"
                     f"Harga: ${price:.3f}\n"
                     f"EMA7: ${ema7_val:.3f} | EMA25: ${ema25_val:.3f} | EMA99: ${ema99_val:.3f}\n"
-                    f"RSI(6): {rsi_val}\n"
+                    f"RSI(6): {rsi_val} | ATR(14): {atr}\n"
                     f"📈 Volume: ${volume:,.0f}\n\n"
                     f"🎯 Entry: ${price:.3f}\n"
-                    f"🎯 TP1: ${tp1} (+{strategy['tp1_pct']}%)\n"
-                    f"🎯 TP2: ${tp2} (+{strategy['tp2_pct']}%)\n\n"
-                    f"{note}"
+                    f"🎯 TP1: ${tp1}\n"
+                    f"🎯 TP2: ${tp2}\n\n"
+                    f"Note: Valid di {', '.join(valid_tfs)} {'✔️'*len(valid_tfs)}{warning}"
                 )
                 results.append(msg)
 
         if results:
             for msg in results:
-                await update.message.reply_text(msg)
+                await update.message.reply_text(msg, parse_mode="Markdown")
                 await asyncio.sleep(0.5)
             await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak sudah ditampilkan.*", parse_mode="Markdown")
         else:

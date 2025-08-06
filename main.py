@@ -56,7 +56,6 @@ def get_indicators(symbol: str, interval: str):
         if len(closes) < 100:
             return -1, -1, -1, -1, -1
 
-        # RSI(6)
         rsi_len = 6
         deltas = [closes[i+1] - closes[i] for i in range(-rsi_len-1, -1)]
         gains = [d if d > 0 else 0 for d in deltas]
@@ -66,12 +65,10 @@ def get_indicators(symbol: str, interval: str):
         rs = avg_gain / avg_loss if avg_loss != 0 else 100
         rsi = round(100 - (100 / (1 + rs)), 2)
 
-        # EMA
         ema7 = sum(closes[-7:]) / 7
         ema25 = sum(closes[-25:]) / 25
         ema99 = sum(closes[-99:]) / 99
 
-        # ATR(14)
         tr = [highs[i] - lows[i] for i in range(-14, 0)]
         atr = sum(tr) / 14
 
@@ -80,7 +77,7 @@ def get_indicators(symbol: str, interval: str):
         return -1, -1, -1, -1, -1
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-   keyboard = [["#️⃣ Trading Spot"], ["*️⃣ Info"], ["*️⃣ Help"]]
+    keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
 
@@ -88,41 +85,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    if text == "#️⃣ Trading Spot":
+    if text == "1️⃣ Trading Spot":
         keyboard = [
             ["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"],
             ["🔙 Kembali ke Menu Utama"]
         ]
-        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=reply_markup)
         return
 
-    elif text == "*️⃣ Info":
+    elif text == "2️⃣ Info":
         msg = (
-            "Klik Tombol Trading Spot, maka BOT otomatis menganalisa dan memberikan signal untuk koin yang memiliki potensi layak entry\n\n"
-            "setiap mode strategi memiliki gaya Trading berbeda sehingga sesuaikan kebutuhan anda\n\n"
-            "🔴 Jemput Bola\nToken oversold. ✅ Strategi akumulasi saat koreksi dalam.\n\n"
-            "🟡 Rebound Swing\nMomentum reversal ringan. ✅ Untuk rotasi swing harian.\n\n"
-            "🟢 Scalping Breakout\nTangkap awal breakout. ✅ Scalping cepat volume tinggi."
-             "Disclaimer. BOT ini bukan penasehat keuangan, gunakan secara bijak dan tentu nya tetap DYOR"\n\n"
+            "Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.\n"
+            "Setiap mode strategi punya gaya entry berbeda:\n\n"
+            "🔴 Jemput Bola\nToken oversold. Strategi akumulasi saat koreksi dalam.\n\n"
+            "🟡 Rebound Swing\nMomentum reversal ringan. Untuk rotasi swing harian.\n\n"
+            "🟢 Scalping Breakout\nTangkap awal breakout. Untuk scalping cepat.\n\n"
+            "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
         )
         await update.message.reply_text(msg)
         return
 
-    elif text == "*️⃣ Help":
+    elif text == "3️⃣ Help":
         msg = (
             "Bot scan harga crypto spot Binance real-time.\n"
-            "Cocok untuk trader berbasis strategi EMA & RSI.\n\n"
+            "Cocok untuk trader berbasis EMA, RSI, dan Volume.\n\n"
             "Hubungi @KikioOreo untuk aktivasi akses penuh."
         )
         await update.message.reply_text(msg)
         return
 
     elif text == "🔙 Kembali ke Menu Utama":
-        return await start(update, context)
+        await start(update, context)
+        return
 
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:
-            await update.message.reply_text("⛔ Akses ditolak. Silakan hubungi admin. klik Tombol Help untuk Bantuan")
+            await update.message.reply_text("⛔ Akses ditolak. Silakan hubungi admin.")
             return
 
         await update.message.reply_text(f"🔍 Memindai sinyal untuk *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")

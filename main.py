@@ -4,12 +4,10 @@ import asyncio
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ENV
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ALLOWED_IDS = os.getenv("ALLOWED_IDS", "")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
 
-# PAIRS
 PAIRS = [
     "SEIUSDT", "RAYUSDT", "PENDLEUSDT", "JUPUSDT", "ENAUSDT", "CRVUSDT", "ENSUSDT",
     "FORMUSDT", "TAOUSDT", "ALGOUSDT", "XTZUSDT", "CAKEUSDT", "HBARUSDT", "NEXOUSDT",
@@ -32,7 +30,7 @@ TF_INTERVALS = {
     "TF1d": "1d"
 }
 
-# === INDICATOR & STRATEGY FUNCTIONS ===
+# ==================== INDICATORS ====================
 
 def get_price(symbol: str) -> float:
     try:
@@ -121,6 +119,8 @@ def trend_strength(closes, volumes):
     else:
         return "Sideways ⏸️"
 
+# ==================== STRATEGY ====================
+
 def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
     try:
         res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={tf_interval}&limit=100", timeout=10)
@@ -132,7 +132,6 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         volumes = [float(k[5]) for k in data]
         if len(closes) < 100: return None
 
-        # === Indicators
         rsi_len = 6
         deltas = [closes[i+1] - closes[i] for i in range(-rsi_len-1, -1)]
         gains = [d if d > 0 else 0 for d in deltas]
@@ -147,7 +146,6 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         tr = [highs[i] - lows[i] for i in range(-14, 0)]
         atr = sum(tr) / 14
 
-        # === Strategy Entry Logic
         is_valid = False
         if strategy == "🔴 Jemput Bola":
             is_valid = price < ema25 and price > 0.9 * ema99 and rsi < 40
@@ -158,7 +156,6 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         if not is_valid:
             return None
 
-        # === Pro Analysis
         candle = detect_candle_pattern(opens, closes, highs, lows)
         divergence = detect_divergence(closes, [rsi] * len(closes))
         support_zone = proximity_to_support_resistance(closes)
@@ -171,22 +168,23 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         trend = trend_strength(closes, volumes)
         macd_hist = calculate_macd(closes)
 
-        # === Confidence Score
         score = 0
         if candle: score += 1
         if "Divergence" in divergence: score += 1
         if "Dekat" in support_zone: score += 1
         if volume_spike: score += 1
         if not support_warning: score += 1
-        label_score = f"🎯 Confidence Score: {score}/5"
 
-        # === Output Message
+        if score < 3:
+            return None
+
+        label_score = f"🎯 Confidence Score: {score}/5"
         msg = (
-            f"{strategy} • {tf_interval}\n\n"
+            f"{strategy} Mode • {tf_interval}\n\n"
             f"✅ {symbol}\n"
             f"Harga: ${price:.3f}\n"
             f"EMA7: {ema7:.3f} | EMA25: {ema25:.3f} | EMA99: {ema99:.3f}\n"
-            f"RSI(6): {rsi} | ATR: {atr:.4f}\n"
+            f"RSI(6): {rsi} | ATR(14): {atr:.4f}\n"
             f"📈 Volume: ${volume:,.0f}\n\n"
             f"🎯 Entry: ${price:.3f}\n"
             f"🎯 TP1: ${tp1} (+{tp1_pct}%)\n"
@@ -203,11 +201,12 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
             msg += "🧬 MACD Cross: Bullish\n"
         elif macd_hist < 0:
             msg += "🧬 MACD Cross: Bearish\n"
+
         return msg
-    except:
+    except Exception as e:
         return None
 
-# === HANDLERS ===
+# ==================== BOT HANDLER ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
@@ -218,10 +217,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if text == "1️⃣ Trading Spot":
-        keyboard = [
-            ["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"],
-            ["🔙 Kembali ke Menu Utama"]
-        ]
+        keyboard = [["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"], ["🔙 Kembali ke Menu Utama"]]
         await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
@@ -233,6 +229,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🟢 Scalping Breakout → Tangkap awal breakout. Untuk scalping cepat.\n\n"
             "⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR."
         )
+        await update.message.reply_text(msg)
         return
 
     elif text == "3️⃣ Help":
@@ -245,7 +242,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:
-            await update.message.reply_text("⛔ Akses ditolak. Silakan hubungi admin.")
+            await update.message.reply_text("⛔ Akses ditolak.")
             return
 
         await update.message.reply_text(f"🔍 Memindai sinyal untuk *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")
@@ -271,13 +268,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for msg in results:
                 await update.message.reply_text(msg, parse_mode="Markdown")
                 await asyncio.sleep(0.5)
-            await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak sudah ditampilkan.*", parse_mode="Markdown")
+            await update.message.reply_text("✅ *Selesai scan. Semua sinyal layak ditampilkan.*", parse_mode="Markdown")
         else:
             await update.message.reply_text("⚠️ Tidak ada sinyal strategi yang layak saat ini.")
     else:
         await update.message.reply_text("⛔ Perintah tidak dikenali.")
 
-# === MAIN ===
+# ==================== MAIN ====================
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()

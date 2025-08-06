@@ -195,6 +195,12 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
     except Exception as e:
         return None
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["1️⃣ Trading Spot"], ["2️⃣ Info"], ["3️⃣ Help"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("📌 Pilih Strategi Multi-TF:", reply_markup=reply_markup)
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()

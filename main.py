@@ -221,8 +221,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
         return
 
-    elif text == "2️⃣ Info":
-    msg = """
+        elif text == "2️⃣ Info":
+        msg = """
 🔹 Pilih strategi & analisa otomatis semua koin. Klik tombol Trading Spot untuk scan otomatis sinyal dari semua koin.
 
 📌 SARAN WAKTU IDEAL
@@ -247,8 +247,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ⚠️ Disclaimer: BOT ini bukan penasihat keuangan. Gunakan secara bijak dan tetap DYOR.
 """
-    await update.message.reply_text(msg)
-    return
+        await update.message.reply_text(msg)
+        return
 
     elif text in STRATEGIES:
         if user_id not in ALLOWED_USERS:

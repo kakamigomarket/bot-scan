@@ -203,13 +203,31 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval, market_tr
         if not is_valid:
             return None
 
+        # Konfigurasi TP dinamis hybrid per strategi
+        tp_config = {
+            "🔴 Jemput Bola": {"multiplier": (1.8, 3.0), "min_pct": (0.07, 0.12)},
+            "🟡 Rebound Swing": {"multiplier": (1.4, 2.4), "min_pct": (0.05, 0.09)},
+            "🟢 Scalping Breakout": {"multiplier": (1.0, 1.8), "min_pct": (0.03, 0.06)}
+        }
+        conf = tp_config.get(strategy, {"multiplier": (1.5, 2.5), "min_pct": (0.05, 0.1)})
+        m1, m2 = conf["multiplier"]
+        min1, min2 = conf["min_pct"]
+
+        tp1_calc = price + atr * m1
+        tp2_calc = price + atr * m2
+        tp1_floor = price * (1 + min1)
+        tp2_floor = price * (1 + min2)
+
+        tp1 = round(max(tp1_calc, tp1_floor), 4)
+        tp2 = round(max(tp2_calc, tp2_floor), 4)
+        tp1_pct = round((tp1 - price) / price * 100, 2)
+        tp2_pct = round((tp2 - price) / price * 100, 2)
+
         candle = detect_candle_pattern(opens, closes, highs, lows)
         divergence = detect_divergence(closes, [rsi]*len(closes))
         zone = proximity_to_support_resistance(closes)
         vol_spike = is_volume_spike(volumes_data)
         support_patah = price < 0.985 * ema25 and price < 0.97 * ema7
-        tp1, tp2 = round(price + atr * 1.0, 4), round(price + atr * 1.8, 4)
-        tp1_pct, tp2_pct = round((tp1 - price) / price * 100, 2), round((tp2 - price) / price * 100, 2)
         trend = trend_strength(closes, volumes_data)
         macd_hist = calculate_macd(closes)
 
@@ -247,6 +265,7 @@ RSI(6): {rsi} | ATR(14): {atr:.4f}
     except Exception as e:
         print(f"[ERROR analisa_strategi_pro] {symbol} {tf_interval}: {e}")
         return None
+
 
 # ========== BOT HANDLER ==========
 

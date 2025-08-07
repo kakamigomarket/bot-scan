@@ -79,6 +79,50 @@ def calculate_macd(closes):
     hist = macd_line[-1] - signal_line[-1] if len(signal_line) else 0
     return round(hist, 4)
 
+# Fungsi tambahan yang sebelumnya belum ada
+def detect_candle_pattern(opens, closes, highs, lows):
+    o, c, h, l = opens[-1], closes[-1], highs[-1], lows[-1]
+    body = abs(c - o)
+    range_ = h - l
+    if range_ == 0: return ""
+    upper = h - max(o, c)
+    lower = min(o, c) - l
+    if body <= 0.1 * range_: return "Doji"
+    if lower > 2 * body and upper < body: return "Hammer"
+    if closes[-2] < opens[-2] and c > o and c > opens[-2] and o < closes[-2]: return "Engulfing"
+    return ""
+
+def detect_divergence(prices, rsis):
+    if len(prices) < 5: return ""
+    p1, p2, r1, r2 = prices[-5], prices[-1], rsis[-5], rsis[-1]
+    if p2 > p1 and r2 < r1: return "🔻 Bearish Divergence"
+    if p2 < p1 and r2 > r1: return "🔺 Bullish Divergence"
+    return ""
+
+def proximity_to_support_resistance(closes):
+    recent = closes[-10:]
+    support, resistance, price = min(recent), max(recent), closes[-1]
+    dist_support = (price - support) / support * 100
+    dist_resist = (resistance - price) / resistance * 100
+    if dist_support < 2: return "Dekat Support"
+    if dist_resist < 2: return "Dekat Resistance"
+    return ""
+
+def is_volume_spike(volumes):
+    avg = sum(volumes[-20:-1]) / 19
+    return volumes[-1] > 1.5 * avg
+
+def trend_strength(closes, volumes):
+    ema10 = sum(closes[-10:]) / 10
+    ema30 = sum(closes[-30:]) / 30
+    slope = ema10 - ema30
+    avg_vol = sum(volumes[-20:]) / 20
+    if slope > 0 and volumes[-1] > 1.2 * avg_vol: return "Uptrend 🔼"
+    if slope < 0 and volumes[-1] > 1.2 * avg_vol: return "Downtrend 🔽"
+    return "Sideways ⏸️"
+
+# ========== PAIRS, STRATEGI & TF ==========
+
 PAIRS = [
     "BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT", "DOGEUSDT", "ADAUSDT",
     "XLMUSDT", "SUIUSDT", "BCHUSDT", "LINKUSDT", "HBARUSDT", "AVAXUSDT", "LTCUSDT", "TONUSDT",
@@ -105,6 +149,8 @@ TF_INTERVALS = {
     "TF1d": "1d"
 }
 
+# ========== VALIDASI TREND BTC ==========
+
 def btc_market_trend():
     try:
         url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=99"
@@ -123,6 +169,8 @@ def btc_market_trend():
     except Exception as e:
         print(f"[ERROR btc_market_trend] {e}")
         return "SIDEWAYS"
+
+# ========== ANALISA STRATEGI PRO ==========
 
 def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval, market_trend):
     try:
@@ -200,6 +248,8 @@ RSI(6): {rsi} | ATR(14): {atr:.4f}
         print(f"[ERROR analisa_strategi_pro] {symbol} {tf_interval}: {e}")
         return None
 
+# ========== BOT HANDLER ==========
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["1️⃣ Trading Spot", "2️⃣ Info"], ["3️⃣ Help"]]
     await update.message.reply_text("🤖 Selamat datang di Bot Sinyal Trading Crypto!\nPilih menu di bawah ini:", 
@@ -263,8 +313,14 @@ Gunakan sesuai momentum pasar & arah BTC!
     else:
         await update.message.reply_text("❌ Perintah tidak dikenali. Gunakan tombol menu.")
 
+# ========== MAIN FUNCTION ==========
+
 def main():
+    print("Bot aktif dan berjalan...")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
+
+if __name__ == "__main__":
+    main()

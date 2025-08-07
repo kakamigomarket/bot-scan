@@ -1,13 +1,83 @@
+# ========== IMPORT & KONFIGURASI ==========
+
 import os
 import requests
 import asyncio
+import time
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ========== KONFIGURASI BOT ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "ISI_TOKEN_BOT_DISINI"
 ALLOWED_IDS = os.getenv("ALLOWED_IDS", "123456789")
 ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_IDS.split(",") if x.strip().isdigit()]
+
+# Cache harga dan volume
+CACHE = {"price": {}, "volume": {}, "time": 0}
+
+# ========== FUNGSI API DENGAN CACHE ==========
+
+def get_price(symbol):
+    now = time.time()
+    if symbol in CACHE["price"] and now - CACHE["time"] < 60:
+        return CACHE["price"][symbol]
+    try:
+        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10)
+        price = float(r.json()["price"])
+        CACHE["price"][symbol] = price
+        CACHE["time"] = now
+        return price
+    except Exception as e:
+        print(f"[ERROR get_price] {symbol}: {e}")
+        return -1
+
+def get_volume(symbol):
+    now = time.time()
+    if symbol in CACHE["volume"] and now - CACHE["time"] < 60:
+        return CACHE["volume"][symbol]
+    try:
+        r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=10)
+        volume = float(r.json()["quoteVolume"])
+        CACHE["volume"][symbol] = volume
+        CACHE["time"] = now
+        return volume
+    except Exception as e:
+        print(f"[ERROR get_volume] {symbol}: {e}")
+        return 0
+
+# ========== FUNGSI EMA & RSI AKURAT ==========
+
+def ema(values, period):
+    multiplier = 2 / (period + 1)
+    ema_values = [sum(values[:period]) / period]
+    for price in values[period:]:
+        ema_values.append((price - ema_values[-1]) * multiplier + ema_values[-1])
+    return ema_values
+
+def calculate_rsi(closes, period=6):
+    if len(closes) < period + 1:
+        return 0
+    deltas = [closes[i+1] - closes[i] for i in range(len(closes)-1)]
+    gains = [d if d > 0 else 0 for d in deltas]
+    losses = [-d if d < 0 else 0 for d in deltas]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period or 1
+    rsis = []
+    for i in range(period, len(deltas)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period or 1
+        rs = avg_gain / avg_loss
+        rsis.append(100 - (100 / (1 + rs)))
+    return round(rsis[-1], 2) if rsis else 0
+
+def calculate_macd(closes):
+    if len(closes) < 35:
+        return 0
+    ema12 = ema(closes, 12)
+    ema26 = ema(closes, 26)
+    macd_line = [a - b for a, b in zip(ema12[-len(ema26):], ema26)]
+    signal_line = ema(macd_line, 9)
+    hist = macd_line[-1] - signal_line[-1] if len(signal_line) else 0
+    return round(hist, 4)
 
 PAIRS = [
     "BTCUSDT", "ETHUSDT", "XRPUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT", "DOGEUSDT", "ADAUSDT",
@@ -35,77 +105,30 @@ TF_INTERVALS = {
     "TF1d": "1d"
 }
 
-# ========== FUNGSI API ==========
-
-def get_price(symbol): 
+def btc_market_trend():
     try:
-        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10)
-        return float(r.json()["price"])
-    except:
-        return -1
+        url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=99"
+        data = requests.get(url, timeout=10).json()
+        closes = [float(k[4]) for k in data]
+        rsi = calculate_rsi(closes)
+        ema7 = sum(closes[-7:]) / 7
+        ema25 = sum(closes[-25:]) / 25
+        ema99 = sum(closes[-99:]) / 99
+        if closes[-1] > ema7 > ema25 > ema99 and rsi > 55:
+            return "UP"
+        elif closes[-1] < ema7 < ema25 < ema99 and rsi < 45:
+            return "DOWN"
+        else:
+            return "SIDEWAYS"
+    except Exception as e:
+        print(f"[ERROR btc_market_trend] {e}")
+        return "SIDEWAYS"
 
-def get_volume(symbol): 
+def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval, market_trend):
     try:
-        r = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=10)
-        return float(r.json()["quoteVolume"])
-    except:
-        return 0
+        if market_trend == "DOWN" and strategy != "🔴 Jemput Bola":
+            return None  # hanya Jemput Bola yang dibolehkan saat trend turun
 
-# ========== LOGIKA ANALISA ==========
-
-def detect_candle_pattern(opens, closes, highs, lows):
-    o, c, h, l = opens[-1], closes[-1], highs[-1], lows[-1]
-    body = abs(c - o)
-    range_ = h - l
-    if range_ == 0: return ""
-    upper = h - max(o, c)
-    lower = min(o, c) - l
-    if body <= 0.1 * range_: return "Doji"
-    if lower > 2 * body and upper < body: return "Hammer"
-    if closes[-2] < opens[-2] and c > o and c > opens[-2] and o < closes[-2]: return "Engulfing"
-    return ""
-
-def detect_divergence(prices, rsis):
-    if len(prices) < 5: return ""
-    p1, p2, r1, r2 = prices[-5], prices[-1], rsis[-5], rsis[-1]
-    if p2 > p1 and r2 < r1: return "🔻 Bearish Divergence"
-    if p2 < p1 and r2 > r1: return "🔺 Bullish Divergence"
-    return ""
-
-def proximity_to_support_resistance(closes):
-    recent = closes[-10:]
-    support, resistance, price = min(recent), max(recent), closes[-1]
-    dist_support = (price - support) / support * 100
-    dist_resist = (resistance - price) / resistance * 100
-    if dist_support < 2: return "Dekat Support"
-    if dist_resist < 2: return "Dekat Resistance"
-    return ""
-
-def is_volume_spike(volumes):
-    avg = sum(volumes[-20:-1]) / 19
-    return volumes[-1] > 1.5 * avg
-
-def calculate_macd(closes):
-    ema12 = [sum(closes[i-11:i+1])/12 for i in range(11, len(closes))]
-    ema26 = [sum(closes[i-25:i+1])/26 for i in range(25, len(closes))]
-    macd = [e1 - e2 for e1, e2 in zip(ema12[-len(ema26):], ema26)]
-    signal = [sum(macd[i-8:i+1])/9 for i in range(8, len(macd))]
-    hist = [m - s for m, s in zip(macd[-len(signal):], signal)]
-    return hist[-1] if hist else 0
-
-def trend_strength(closes, volumes):
-    ema10 = sum(closes[-10:]) / 10
-    ema30 = sum(closes[-30:]) / 30
-    slope = ema10 - ema30
-    avg_vol = sum(volumes[-20:]) / 20
-    if slope > 0 and volumes[-1] > 1.2 * avg_vol: return "Uptrend 🔼"
-    if slope < 0 and volumes[-1] > 1.2 * avg_vol: return "Downtrend 🔽"
-    return "Sideways ⏸️"
-
-# ========== ANALISA STRATEGI ==========
-
-def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
-    try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={tf_interval}&limit=100"
         data = requests.get(url, timeout=10).json()
         closes = [float(k[4]) for k in data]
@@ -114,12 +137,7 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         lows = [float(k[3]) for k in data]
         volumes_data = [float(k[5]) for k in data]
 
-        deltas = [closes[i+1] - closes[i] for i in range(-7, -1)]
-        gains = [d if d > 0 else 0 for d in deltas]
-        losses = [-d if d < 0 else 0 for d in deltas]
-        rs = (sum(gains)/6) / (sum(losses)/6 or 1)
-        rsi = round(100 - 100 / (1 + rs), 2)
-
+        rsi = calculate_rsi(closes)
         ema7 = sum(closes[-7:]) / 7
         ema25 = sum(closes[-25:]) / 25
         ema99 = sum(closes[-99:]) / 99
@@ -134,9 +152,9 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
             is_valid = price < ema25 and price > ema7 and rsi < 50
         elif strategy == "🟢 Scalping Breakout":
             is_valid = price > ema7 and price > ema25 and price > ema99 and rsi >= 60
-        if not is_valid: return None
+        if not is_valid:
+            return None
 
-        # Indikator tambahan
         candle = detect_candle_pattern(opens, closes, highs, lows)
         divergence = detect_divergence(closes, [rsi]*len(closes))
         zone = proximity_to_support_resistance(closes)
@@ -147,11 +165,14 @@ def analisa_strategi_pro(symbol, strategy, price, volume, tf_interval):
         trend = trend_strength(closes, volumes_data)
         macd_hist = calculate_macd(closes)
 
+        # Hitung skor confidence + tf valid
         score = sum([
-            bool(candle), "Divergence" in divergence, "Dekat" in zone,
-            vol_spike, not support_patah
+            bool(candle),
+            "Divergence" in divergence,
+            "Dekat" in zone,
+            vol_spike,
+            not support_patah
         ])
-
         if score < 3:
             return None
 
@@ -175,67 +196,72 @@ RSI(6): {rsi} | ATR(14): {atr:.4f}
         msg += f"📊 Trend: {trend}\n"
         msg += f"🧬 MACD Cross: {'Bullish' if macd_hist > 0 else 'Bearish'}\n"
         return msg
-    except:
+    except Exception as e:
+        print(f"[ERROR analisa_strategi_pro] {symbol} {tf_interval}: {e}")
         return None
-
-# ========== BOT HANDLER ==========
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["1️⃣ Trading Spot", "2️⃣ Info"], ["3️⃣ Help"]]
-    await update.message.reply_text("🤖 Selamat datang! Pilih menu di bawah ini:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    await update.message.reply_text("🤖 Selamat datang di Bot Sinyal Trading Crypto!\nPilih menu di bawah ini:", 
+                                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("⛔ Akses ditolak. Kamu tidak terdaftar sebagai pengguna.")
+        return
+
     if text == "1️⃣ Trading Spot":
         keyboard = [["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"], ["🔙 Kembali ke Menu Utama"]]
-        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+        await update.message.reply_text("📊 Pilih Mode Strategi:", 
+                                        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
     elif text == "2️⃣ Info":
         await update.message.reply_text("""
-📌 Jadwal Ideal:
-🔴 Jemput Bola: Pagi 07.30–08.30 WIB
+📌 Jadwal Ideal Strategi:
+🔴 Jemput Bola: 07.30–08.30 WIB
 🟡 Rebound Swing: Siang–Sore
 🟢 Scalping Breakout: Malam 19.00–22.00 WIB
-Gunakan sesuai momentum. Tetap DYOR ya!
+Gunakan sesuai momentum pasar & arah BTC!
 """)
 
     elif text == "3️⃣ Help":
-        await update.message.reply_text("💬 Hubungi @KikioOreo untuk panduan & aktivasi akses.")
+        await update.message.reply_text("💬 Hubungi admin @KikioOreo untuk bantuan atau aktivasi.")
 
     elif text == "🔙 Kembali ke Menu Utama":
         await start(update, context)
 
     elif text in STRATEGIES:
-        if user_id not in ALLOWED_USERS:
-            await update.message.reply_text("⛔ Akses ditolak.")
-            return
-        await update.message.reply_text(f"🔍 Memindai sinyal untuk *{text}*...\nTunggu beberapa detik...", parse_mode="Markdown")
-
+        await update.message.reply_text(f"🔍 Memindai sinyal untuk strategi *{text}*...\nTunggu beberapa saat...", parse_mode="Markdown")
         strategy = STRATEGIES[text]
+        trend_btc = btc_market_trend()
+
         hasil = []
         for pair in PAIRS:
             price = get_price(pair)
             volume = get_volume(pair)
             if price == -1 or volume < strategy["volume_min"]:
                 continue
-            valid_tf = [analisa_strategi_pro(pair, text, price, volume, tf) for tf in TF_INTERVALS.values()]
-            valid_msgs = [msg for msg in valid_tf if msg]
+
+            valid_msgs = []
+            for tf in TF_INTERVALS.values():
+                msg = analisa_strategi_pro(pair, text, price, volume, tf, trend_btc)
+                if msg: valid_msgs.append(msg)
+
             if len(valid_msgs) >= 2:
-                hasil.append(valid_msgs[0])
+                hasil.append(valid_msgs[0])  # hanya kirim satu sinyal utama
 
         if hasil:
             for msg in hasil:
                 await update.message.reply_text(msg, parse_mode="Markdown")
                 await asyncio.sleep(0.5)
-            await update.message.reply_text("✅ *Selesai scan. Sinyal layak ditemukan.*", parse_mode="Markdown")
+            await update.message.reply_text("✅ *Scan selesai. Sinyal layak ditemukan.*", parse_mode="Markdown")
         else:
-            await update.message.reply_text("⚠️ Tidak ada sinyal strategi yang layak saat ini.")
+            await update.message.reply_text("⚠️ Tidak ada sinyal layak saat ini. Coba di waktu lain.")
     else:
-        await update.message.reply_text("⛔ Perintah tidak dikenali.")
-
-# ========== MAIN FUNCTION ==========
+        await update.message.reply_text("❌ Perintah tidak dikenali. Gunakan tombol menu.")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -243,5 +269,3 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
 
-if __name__ == "__main__":
-    main()

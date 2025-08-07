@@ -1,59 +1,92 @@
 # bot-scan
 
-🧠 Versi Pro Fitur yang Sudah Aktif
+🧠  Versi Pro Fitur yang Sudah Aktif
 
-📊 Indikator & Analisa Teknikal: 
 
-✅ EMA7, EMA25, EMA99
+✅ STRUKTUR FITUR BOT SAAT INI
 
-✅ RSI(6)
+🔍 1. Multi-Strategi Trading
+🔴 Jemput Bola – Entry saat oversold (RSI < 40), cocok swing aman
 
-✅ ATR(14) → digunakan untuk TP1 & TP2 dinamis
+🟡 Rebound Swing – Entry saat mulai naik dari MA/EMA, semi-trend
 
-✅ Volume 24 jam
+🟢 Scalping Breakout – Entry saat breakout, momentum cepat
 
-✅ Volume Spike (vs MA20)
+📊 2. Indikator Teknikal Otomatis
+EMA7, EMA25, EMA99 → validasi arah & posisi harga
 
-✅ Trend Strength (berdasarkan slope EMA + volume)
+RSI(6) → deteksi oversold/overbought
 
-✅ MACD Histogram Cross (Bullish / Bearish)
+ATR(14) → dasar volatilitas & TP dinamis
 
-✅ Pola Candle: Doji, Hammer, Engulfing
+MACD Histogram → konfirmasi arah tren
 
-✅ Divergence (Bullish / Bearish)
+Volume 24h & Volume Spike
 
-✅ Deteksi Proximity ke Support / Resistance
+Trend Strength (berbasis EMA slope & volume)
 
-🎯 Sinyal & Strategi:
+Candle Pattern Detection (Doji, Hammer, Engulfing)
 
-✅ Tiga mode strategi:
+Support/Resistance Proximity
 
-🔴 Jemput Bola (akumulasi RSI < 40)
+Divergence (Bullish/Bearish)
 
-🟡 Rebound Swing (RSI < 50 + struktur balik arah)
+💰 3. Take Profit Dinamis Hybrid
+TP dihitung berdasarkan kombinasi:
 
-🟢 Scalping Breakout (RSI > 60 + breakout)
+ATR × multiplier
 
-✅ Validasi multi-timeframe: Pair hanya tampil jika minimal 2 TF valid
+Minimum % (agar fee dan slippage tetap cuan)
 
-✅ Estimasi Take Profit otomatis:
+Konfigurasi khusus tiap strategi:
 
-TP1 = +1.0 ATR
+Strategi	TP1	TP2
+🔴 Jemput Bola	≥7%	≥12%
+🟡 Rebound Swing	≥5%	≥9%
+🟢 Scalping Breakout	≥3%	≥6%
 
-TP2 = +1.8 ATR
+🧠 4. Sistem Validasi Cerdas
+Confidence Score (0–5) dari:
 
-Estimasi % ke TP juga ditampilkan
+Candle pattern
 
-🔔 Peringatan & Visual:
+Divergence
 
-✅ ⚠️ Notifikasi “Support Patah” jika harga turun jauh dari EMA7 & EMA25
+Dekat support/resistance
 
-✅ 🎯 Confidence Score (0–5) berdasarkan sinyal teknikal yang terpenuhi
+Volume spike
 
-✅ Mode tampilan sinyal langsung dikirim ke Telegram (tidak hanya log)
+Support patah
 
-🔒 Keamanan:
+Hanya menampilkan sinyal jika skor ≥ 3 dan valid di ≥ 2 timeframe
 
-✅ Filter hanya untuk user ID yang diizinkan (ALLOWED_USERS)
+📈 5. Multi-Timeframe Analyzer
+Validasi TF: 15m, 1h, 4h, 1D
 
-✅ Tidak ada perintah /scan bebas — hanya bisa dari tombol menu
+Hanya menampilkan pair yang konsisten di ≥2 TF
+
+📉 6. Filter Berdasarkan Trend BTC
+Cek arah tren BTC (EMA & RSI)
+
+Jika BTC bearish, hanya strategi Jemput Bola yang aktif
+
+🤖 7. Bot Telegram Interaktif
+Menu: Start / Strategi / Info / Help
+
+Proteksi akses (ALLOWED_USERS)
+
+Siap dijalankan via local, VPS, atau Railway
+
+⚙️ 8. Performa & Keamanan
+Menggunakan caching untuk API agar efisien
+
+Error handling dan logging aktif
+
+Tidak rawan spam karena sinyal difilter ketat
+
+🏁 Siap digunakan untuk:
+Manual entry trading spot
+
+Melacak sinyal berkualitas dari 70+ koin
+
+Sinyal masuk langsung dari Telegram

@@ -1,3 +1,22 @@
+"""
+Crypto Signal Bot – Async Refactor (aiohttp + better TA)
+
+Add-ons (Aug 2025):
+- Multi‑Timeframe (MTF) confirmation (TF15 confirms TF1h for direction)
+- ADX/DMI filter (trend strength)
+- Volatility regime via ATR%
+- Liquidity guard (avg trades/candle)
+- Weighted confidence score (no partial TP/TSL). SL ATR only as info.
+
+Requirements:
+- python-telegram-bot >= 21.0
+- aiohttp >= 3.9
+
+ENV variables (Railway / .env):
+- BOT_TOKEN           -> token bot Telegram
+- ALLOWED_IDS         -> daftar user id, dipisah koma. contoh: "123,456"
+
+"""
 
 from __future__ import annotations
 
@@ -501,13 +520,29 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
 
 # ===================== TELEGRAM HANDLERS =====================
 
-WELCOME_KEYBOARD = [["1️⃣ Trading Spot", "2️⃣ Info"], ["3️⃣ Help"]]
-STRAT_KEYBOARD = [["🔴 Jemput Bola"], ["🟡 Rebound Swing"], ["🟢 Scalping Breakout"], ["🔙 Kembali ke Menu Utama"]]
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import CallbackQueryHandler
+
+WELCOME_KEYBOARD_INLINE = InlineKeyboardMarkup([
+    [InlineKeyboardButton("🟢 Retail Mode", callback_data="mode:retail")],
+    [InlineKeyboardButton("🧠 Pro Mode", callback_data="mode:pro")],
+    [InlineKeyboardButton("ℹ️ Info", callback_data="info"), InlineKeyboardButton("🆘 Help", callback_data="help")],
+])
+
+STRAT_INLINE = lambda mode: InlineKeyboardMarkup([
+    [InlineKeyboardButton("🟢 Scalping Breakout", callback_data=f"scan:{mode}:🟢 Scalping Breakout")],
+    [InlineKeyboardButton("🟡 Rebound Swing", callback_data=f"scan:{mode}:🟡 Rebound Swing")],
+    [InlineKeyboardButton("🔴 Jemput Bola", callback_data=f"scan:{mode}:🔴 Jemput Bola")],
+    [InlineKeyboardButton("⬅️ Kembali", callback_data="back")],
+])
 
 async def _check_auth(update: Update) -> bool:
-    user_id = update.effective_user.id if update.effective_user else 0
+    user_id = (update.effective_user.id if update.effective_user else 0)
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
-        await update.message.reply_text("⛔ Akses ditolak. Kamu tidak terdaftar sebagai pengguna.")
+        if update.message:
+            await update.message.reply_text("⛔ Akses ditolak. Kamu tidak terdaftar sebagai pengguna.")
+        elif update.callback_query:
+            await update.callback_query.answer("Akses ditolak", show_alert=True)
         return False
     return True
 
@@ -516,8 +551,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🤖 Selamat datang di Bot Sinyal Trading Crypto!
-Pilih menu di bawah ini:",
-        reply_markup=ReplyKeyboardMarkup(WELCOME_KEYBOARD, resize_keyboard=True),
+Pilih mode di bawah ini:",
+        reply_markup=WELCOME_KEYBOARD_INLINE,
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,7 +570,7 @@ Gunakan sesuai momentum pasar & arah BTC!
     )
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # /scan <nama strategi> opsional
+    # Masih support /scan <strategi>, default retail
     if not await _check_auth(update):
         return
     args = context.args or []
@@ -549,33 +584,98 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not matched:
             await update.message.reply_text("Strategi tidak dikenali. Pilih dari menu.")
             return
-        await run_scan(update, context, matched)
+        await run_scan(update, context, matched, mode_profile="retail")
     else:
-        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(STRAT_KEYBOARD, resize_keyboard=True))
+        await update.message.reply_text("Pilih mode terlebih dulu:", reply_markup=WELCOME_KEYBOARD_INLINE)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Fallback untuk user yang masih pakai keyboard lama
     if not await _check_auth(update):
         return
     text = (update.message.text or "").strip()
-    if text == "1️⃣ Trading Spot":
-        await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(STRAT_KEYBOARD, resize_keyboard=True))
-    elif text == "2️⃣ Info":
+    if text == "2️⃣ Info":
         await info_cmd(update, context)
     elif text == "3️⃣ Help":
         await help_cmd(update, context)
-    elif text == "🔙 Kembali ke Menu Utama":
-        await start(update, context)
-    elif text in STRATEGIES:
-        await run_scan(update, context, text)
     else:
-        await update.message.reply_text("❌ Perintah tidak dikenali. Gunakan tombol menu atau /scan.")
+        await update.message.reply_text("Silakan gunakan tombol di bawah ini:", reply_markup=WELCOME_KEYBOARD_INLINE)
 
-async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_name: str):
-    await update.message.reply_text(
-        f"🔍 Memindai sinyal untuk strategi *{strategy_name}*...
-Tunggu beberapa saat...",
-        parse_mode="Markdown",
-    )
+# ========== INLINE CALLBACKS ==========
+
+MODE_PROFILES = {
+    "retail": {
+        "ADX_MIN": 20.0,
+        "ATR_PCT_MIN_BREAKOUT": 0.08,
+        "AVG_TRADES_MIN": 80,
+        "REQUIRE_2_TF": False,
+    },
+    "pro": {
+        "ADX_MIN": 25.0,
+        "ATR_PCT_MIN_BREAKOUT": 0.15,
+        "AVG_TRADES_MIN": 200,
+        "REQUIRE_2_TF": True,
+    },
+}
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_auth(update):
+        return
+    q = update.callback_query
+    data = q.data or ""
+
+    if data == "info":
+        await q.answer()
+        await q.edit_message_text(
+            """
+📌 Jadwal Ideal Strategi:
+🔴 Jemput Bola: 07.30–08.30 WIB
+🟡 Rebound Swing: Siang–Sore
+🟢 Scalping Breakout: Malam 19.00–22.00 WIB
+Gunakan sesuai momentum pasar & arah BTC!
+""".strip(),
+            reply_markup=WELCOME_KEYBOARD_INLINE,
+        )
+        return
+    if data == "help":
+        await q.answer()
+        await q.edit_message_text("💬 Hubungi admin @KikioOreo untuk bantuan atau aktivasi.", reply_markup=WELCOME_KEYBOARD_INLINE)
+        return
+    if data == "back":
+        await q.answer()
+        await q.edit_message_text("Pilih mode:", reply_markup=WELCOME_KEYBOARD_INLINE)
+        return
+    if data.startswith("mode:"):
+        _, mode = data.split(":", 1)
+        await q.answer()
+        await q.edit_message_text(f"Mode **{mode.upper()}** dipilih. Pilih strategi:", parse_mode="Markdown", reply_markup=STRAT_INLINE(mode))
+        return
+    if data.startswith("scan:"):
+        # scan:<mode>:<strategi>
+        _, mode, strategy = data.split(":", 2)
+        await q.answer("Memulai scan…")
+        # simulasikan command run_scan tapi via callback
+        fake_update = update
+        await run_scan(fake_update, context, strategy, mode_profile=mode)
+        return
+
+# ========== RUN SCAN DENGAN MODE PROFILE ==========
+
+async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_name: str, mode_profile: str = "retail"):
+    # Override knobs sesuai mode
+    prof = MODE_PROFILES.get(mode_profile, MODE_PROFILES["retail"]) 
+    global ADX_MIN, ATR_PCT_MIN_BREAKOUT, AVG_TRADES_MIN, REQUIRE_2_TF
+    ADX_MIN = prof["ADX_MIN"]
+    ATR_PCT_MIN_BREAKOUT = prof["ATR_PCT_MIN_BREAKOUT"]
+    AVG_TRADES_MIN = prof["AVG_TRADES_MIN"]
+    REQUIRE_2_TF = prof["REQUIRE_2_TF"]
+
+    # kirim notifikasi awal
+    if update.callback_query and update.effective_chat:
+        await context.bot.send_message(update.effective_chat.id, f"🔍 [{mode_profile.upper()}] Memindai sinyal untuk strategi *{strategy_name}*...
+Tunggu beberapa saat...", parse_mode="Markdown")
+    elif update.message:
+        await update.message.reply_text(f"🔍 [{mode_profile.upper()}] Memindai sinyal untuk strategi *{strategy_name}*...
+Tunggu beberapa saat...", parse_mode="Markdown")
 
     http_sem = asyncio.Semaphore(HTTP_CONCURRENCY)
     analysis_sem = asyncio.Semaphore(ANALYSIS_CONCURRENCY)
@@ -584,7 +684,6 @@ Tunggu beberapa saat...",
         client = BinanceClient(session, http_sem)
         trend_btc = await btc_market_trend(client)
 
-        # prefetch price & 24h ticker secara paralel
         async def pv(pair: str):
             try:
                 price, t24 = await asyncio.gather(client.price(pair), client.ticker24h(pair))
@@ -599,8 +698,6 @@ Tunggu beberapa saat...",
 
         strategy_cfg = STRATEGIES[strategy_name]
         vol_min = strategy_cfg["volume_min_usd"]
-
-        # filter dengan 24h quote volume minimum
         valid_pairs = [(pair, p, v) for pair, p, v in valid_pairs if v >= vol_min]
 
         messages: List[str] = []
@@ -619,15 +716,31 @@ Tunggu beberapa saat...",
 
         await asyncio.gather(*(analyze_pair(pair, p, v) for pair, p, v in valid_pairs))
 
-    if messages:
-        for m in messages[:20]:  # bound messages biar tidak spam
-            await update.message.reply_text(m, parse_mode="Markdown")
+    target_chat = update.effective_chat.id if update.effective_chat else None
+    if messages and target_chat:
+        for m in messages[:20]:
+            await context.bot.send_message(target_chat, m, parse_mode="Markdown")
             await asyncio.sleep(0.4)
-        await update.message.reply_text("✅ *Scan selesai. Sinyal layak ditemukan.*", parse_mode="Markdown")
-    else:
-        await update.message.reply_text("⚠️ Tidak ada sinyal layak saat ini. Coba di waktu lain.")
+        await context.bot.send_message(target_chat, "✅ *Scan selesai. Sinyal layak ditemukan.*", parse_mode="Markdown")
+    elif target_chat:
+        await context.bot.send_message(target_chat, "⚠️ Tidak ada sinyal layak saat ini. Coba di waktu lain.")
 
 # ===================== MAIN =====================
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("info", info_cmd))
+    app.add_handler(CommandHandler("scan", scan_command))
+    app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    log.info("Bot aktif dan berjalan...")
+    app.run_polling()
+
+# ===================== END =====================
+
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()

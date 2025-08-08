@@ -53,12 +53,14 @@ def ema_series(values: List[float], period: int) -> List[float]:
 def rsi_series(closes: List[float], period: int = 14) -> List[float]:
     if len(closes) < period + 1: return []
     deltas = [closes[i+1] - closes[i] for i in range(len(closes)-1)]
-    gains = [max(d, 0.0) for d in deltas]; losses = [max(-d, 0.0) for d in deltas]
-    avg_gain = sum(gains[:period]) / period; avg_loss = sum(losses[:period]) / period
+    gains = [max(d, 0.0) for d in deltas]
+    losses = [max(-d, 0.0) for d in deltas]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
     rsis: List[float] = []
     for i in range(period, len(deltas)):
-        avg_gain = (avg_gain*(period-1)+gains[i])/period
-        avg_loss = (avg_loss*(period-1)+losses[i])/period
+        avg_gain = (avg_gain*(period-1)+gains[i]) / period
+        avg_loss = (avg_loss*(period-1)+losses[i]) / period
         if avg_loss == 0 and avg_gain == 0: rs = 1.0
         elif avg_loss == 0: rs = float("inf")
         elif avg_gain == 0: rs = 0.0
@@ -69,7 +71,8 @@ def rsi_series(closes: List[float], period: int = 14) -> List[float]:
 
 def macd_histogram(closes: List[float]) -> float:
     if len(closes) < 35: return 0.0
-    ema12 = ema_series(closes, 12); ema26 = ema_series(closes, 26)
+    ema12 = ema_series(closes, 12)
+    ema26 = ema_series(closes, 26)
     n = min(len(ema12), len(ema26))
     macd_line = [a-b for a,b in zip(ema12[-n:], ema26[-n:])]
     signal = ema_series(macd_line, 9)
@@ -316,19 +319,25 @@ async def _check_auth(update: Update) -> bool:
         return False
     return True
 
+async def _nuke_reply_keyboard(chat_id, context):
+    m = await context.bot.send_message(chat_id, " ", reply_markup=ReplyKeyboardRemove())
+    try:
+        await context.bot.delete_message(chat_id, m.message_id)
+    except Exception:
+        pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_auth(update): return
-    await update.message.reply_text(
-        "🤖 Selamat datang di Bot Sinyal Trading Crypto!\nPilih mode di bawah ini:",
-        reply_markup=WELCOME_KEYBOARD_INLINE if update.message else None,
-    )
-    # pastikan reply keyboard lama hilang
-    await context.bot.send_message(update.effective_chat.id, " ", reply_markup=ReplyKeyboardRemove())
+    chat_id = update.effective_chat.id
+    await _nuke_reply_keyboard(chat_id, context)
+    await context.bot.send_message(chat_id, "🤖 Selamat datang di Bot Sinyal Trading Crypto!\nPilih mode di bawah ini:", reply_markup=WELCOME_KEYBOARD_INLINE)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _nuke_reply_keyboard(update.effective_chat.id, context)
     await update.message.reply_text("💬 Hubungi admin @KikioOreo untuk bantuan atau aktivasi.", reply_markup=ReplyKeyboardRemove())
 
 async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _nuke_reply_keyboard(update.effective_chat.id, context)
     txt = "\n".join([
         "📌 Jadwal Ideal Strategi:",
         "🔴 Jemput Bola: 07.30–08.30 WIB",
@@ -340,25 +349,28 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_auth(update): return
+    chat_id = update.effective_chat.id
+    await _nuke_reply_keyboard(chat_id, context)
     args = context.args or []
     if args:
         name = " ".join(args).strip()
         matched = next((k for k in STRATEGIES if name.lower() in k.lower()), None)
         if not matched:
-            await update.message.reply_text("Strategi tidak dikenali. Pilih dari menu.", reply_markup=ReplyKeyboardRemove()); return
+            await context.bot.send_message(chat_id, "Strategi tidak dikenali. Pilih dari menu.", reply_markup=WELCOME_KEYBOARD_INLINE); return
         await run_scan(update, context, matched, mode_profile="retail")
     else:
-        await update.message.reply_text("Pilih mode terlebih dulu:", reply_markup=WELCOME_KEYBOARD_INLINE)
-        await context.bot.send_message(update.effective_chat.id, " ", reply_markup=ReplyKeyboardRemove())
+        await context.bot.send_message(chat_id, "Pilih mode terlebih dulu:", reply_markup=WELCOME_KEYBOARD_INLINE)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_auth(update): return
-    await update.message.reply_text("Silakan gunakan tombol di bawah ini:", reply_markup=WELCOME_KEYBOARD_INLINE)
-    await context.bot.send_message(update.effective_chat.id, " ", reply_markup=ReplyKeyboardRemove())
+    chat_id = update.effective_chat.id
+    await _nuke_reply_keyboard(chat_id, context)
+    await context.bot.send_message(chat_id, "Silakan gunakan tombol di bawah ini:", reply_markup=WELCOME_KEYBOARD_INLINE)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_auth(update): return
     q = update.callback_query; data = q.data or ""
+    await _nuke_reply_keyboard(update.effective_chat.id, context)
     if data == "info":
         await q.answer()
         await q.edit_message_text(
@@ -391,32 +403,25 @@ async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_
     global ADX_MIN, ATR_PCT_MIN_BREAKOUT, AVG_TRADES_MIN, REQUIRE_2_TF
     ADX_MIN = prof["ADX_MIN"]; ATR_PCT_MIN_BREAKOUT = prof["ATR_PCT_MIN_BREAKOUT"]
     AVG_TRADES_MIN = prof["AVG_TRADES_MIN"]; REQUIRE_2_TF = prof["REQUIRE_2_TF"]
-
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id:
         await context.bot.send_message(chat_id, f"🔍 [{mode_profile.upper()}] Memindai sinyal untuk strategi *{strategy_name}*...\nTunggu beberapa saat...", parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
-
     http_sem = asyncio.Semaphore(HTTP_CONCURRENCY)
     analysis_sem = asyncio.Semaphore(ANALYSIS_CONCURRENCY)
-
     async with aiohttp.ClientSession(headers={"User-Agent": "SignalBot/1.0"}) as session:
         client = BinanceClient(session, http_sem)
         trend_btc = await btc_market_trend(client)
-
         async def pv(pair: str):
             try:
                 price, t24 = await asyncio.gather(client.price(pair), client.ticker24h(pair))
                 return pair, price, float(t24["data"].get("quoteVolume", 0.0))
             except Exception as e:
                 log.info(f"skip {pair}: {e}"); return pair, None, None
-
         results = await asyncio.gather(*(pv(pair) for pair in PAIRS))
         valid_pairs = [(pair,p,v) for (pair,p,v) in results if isinstance(p,float) and isinstance(v,float)]
         vol_min = STRATEGIES[strategy_name]["volume_min_usd"]
         valid_pairs = [(pair,p,v) for pair,p,v in valid_pairs if v >= vol_min]
-
         messages: List[str] = []
-
         async def analyze_pair(pair: str, price: float, vol24: float):
             nonlocal messages
             async with analysis_sem:
@@ -425,9 +430,7 @@ async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_
                 valid = [m for m in out if m]
                 if (len(valid) >= 2 if REQUIRE_2_TF else len(valid) >= 1):
                     messages.append(valid[0])
-
         await asyncio.gather(*(analyze_pair(pair,p,v) for pair,p,v in valid_pairs))
-
     if chat_id:
         if messages:
             for m in messages[:20]:

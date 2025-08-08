@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 import os, time, math, asyncio, logging
 from typing import Dict, Tuple, List, Optional

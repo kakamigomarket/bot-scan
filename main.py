@@ -1,21 +1,3 @@
-"""
-Crypto Signal Bot – Async Refactor (aiohttp + better TA)
-
-Requirements (tested):
-- python-telegram-bot >= 21.0
-- aiohttp >= 3.9
-
-ENV variables (Railway / .env):
-- BOT_TOKEN           -> token bot Telegram
-- ALLOWED_IDS         -> daftar user id, dipisah koma. contoh: "123,456"
-
-Catatan:
-- Menggunakan cache per-key dengan TTL
-- Menggunakan ATR (true range) yang benar
-- RSI berbasis deret; divergence berfungsi
-- Paralel fetch harga/volume & analisa TF dengan pembatas concurrency
-- Filter volume konsisten: 24h quoteVolume + rata-rata volume TF
-"""
 
 from __future__ import annotations
 
@@ -50,6 +32,12 @@ log = logging.getLogger("signal-bot")
 # Concurrency limits
 HTTP_CONCURRENCY = int(os.getenv("HTTP_CONCURRENCY", "12"))
 ANALYSIS_CONCURRENCY = int(os.getenv("ANALYSIS_CONCURRENCY", "8"))
+
+# Threshold & knobs (mudah di-tune)
+ADX_MIN = 22.0              # minimal adx untuk anggap trend cukup kuat
+ATR_PCT_MIN_BREAKOUT = 0.12 # %; hindari breakout saat volatilitas sangat tipis
+AVG_TRADES_MIN = 120        # rata-rata trades/candle minimum (liquidity guard)
+REQUIRE_2_TF = True         # butuh minimal 2 TF valid untuk alert
 
 # Pairs & Strategy setup
 PAIRS = [
@@ -147,6 +135,47 @@ def atr(highs: List[float], lows: List[float], closes: List[float], period: int 
         trs.append(true_range(highs[i], lows[i], closes[i-1]))
     return sum(trs[-period:]) / period
 
+# --- DMI/ADX ---
+
+def dmi_adx(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Tuple[float, float, float]:
+    """Return (+DI, -DI, ADX)."""
+    if len(closes) <= period + 1:
+        return (0.0, 0.0, 0.0)
+    # True Range & directional movement
+    trs: List[float] = []
+    plus_dm: List[float] = []
+    minus_dm: List[float] = []
+    for i in range(1, len(closes)):
+        up_move = highs[i] - highs[i-1]
+        down_move = lows[i-1] - lows[i]
+        plus_dm.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
+        minus_dm.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
+        trs.append(true_range(highs[i], lows[i], closes[i-1]))
+    # Wilder's smoothing
+    def wilder_smooth(arr: List[float], p: int) -> List[float]:
+        if len(arr) < p:
+            return []
+        smoothed = [sum(arr[:p])]
+        for x in arr[p:]:
+            smoothed.append(smoothed[-1] - (smoothed[-1] / p) + x)
+        return smoothed
+    atr_w = [x / period for x in wilder_smooth(trs, period)]
+    pdm_w = [x / period for x in wilder_smooth(plus_dm, period)]
+    mdm_w = [x / period for x in wilder_smooth(minus_dm, period)]
+    if not atr_w or not pdm_w or not mdm_w:
+        return (0.0, 0.0, 0.0)
+    plus_di = [100 * (p / t) if t else 0.0 for p, t in zip(pdm_w[-len(atr_w):], atr_w)]
+    minus_di = [100 * (m / t) if t else 0.0 for m, t in zip(mdm_w[-len(atr_w):], atr_w)]
+    dx = [100 * abs(p - m) / (p + m) if (p + m) else 0.0 for p, m in zip(plus_di, minus_di)]
+    if len(dx) < period:
+        return (plus_di[-1], minus_di[-1], 0.0)
+    # ADX as Wilder's smoothed DX
+    adx_vals = [sum(dx[:period]) / period]
+    for x in dx[period:]:
+        adx_vals.append((adx_vals[-1] * (period - 1) + x) / period)
+    return (plus_di[-1], minus_di[-1], adx_vals[-1])
+
+# --- Patterns & helpers ---
 
 def detect_candle_pattern(opens: List[float], closes: List[float], highs: List[float], lows: List[float]) -> str:
     o, c, h, l = opens[-1], closes[-1], highs[-1], lows[-1]
@@ -222,10 +251,12 @@ class BinanceClient:
         self.cache: Dict[str, Dict[str, Tuple[float, float]]] = {
             "price": {},
             "volume": {},
+            "ticker24": {},
         }
         self.ttl = {
             "price": 30,
             "volume": 60,
+            "ticker24": 30,
         }
 
     def _fresh(self, bucket: str, symbol: str) -> bool:
@@ -251,19 +282,23 @@ class BinanceClient:
         self.cache["price"][symbol] = (price, time.time())
         return price
 
-    async def quote_volume_24h(self, symbol: str) -> float:
-        if self._fresh("volume", symbol):
-            return self.cache["volume"][symbol][0]
+    async def ticker24h(self, symbol: str) -> dict:
+        if self._fresh("ticker24", symbol):
+            return {"cached": True, **{"data": self.cache["ticker24"][symbol][0]}}
         data = await self._get("/api/v3/ticker/24hr", {"symbol": symbol})
-        vol = float(data["quoteVolume"])  # type: ignore
-        self.cache["volume"][symbol] = (vol, time.time())
-        return vol
+        self.cache["ticker24"][symbol] = (data, time.time())
+        return {"cached": False, **{"data": data}}
 
-    async def klines(self, symbol: str, interval: str, limit: int = 100) -> List[List[float]]:
+    async def quote_volume_24h(self, symbol: str) -> float:
+        t = await self.ticker24h(symbol)
+        data = t["data"]
+        return float(data.get("quoteVolume", 0.0))
+
+    async def klines(self, symbol: str, interval: str, limit: int = 120) -> List[List[float]]:
         data = await self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
         return data  # raw kline rows
 
-# ===================== MARKET STATE =====================
+# ===================== MARKET STATE & MTF =====================
 
 async def btc_market_trend(client: BinanceClient) -> str:
     try:
@@ -283,10 +318,29 @@ async def btc_market_trend(client: BinanceClient) -> str:
         log.warning(f"btc_market_trend error: {e}")
         return "SIDEWAYS"
 
+async def analisa_trend_ringkas(client: BinanceClient, symbol: str, tf: str = "1h") -> str:
+    try:
+        data = await client.klines(symbol, tf, 99)
+        closes = [float(k[4]) for k in data]
+        ema7 = sum(closes[-7:]) / 7
+        ema25 = sum(closes[-25:]) / 25
+        ema99 = sum(closes[-99:]) / 99
+        rsi_last = rsi_series(closes, 14)
+        r = rsi_last[-1] if rsi_last else 50
+        if closes[-1] > ema7 > ema25 > ema99 and r > 55:
+            return "UP"
+        if closes[-1] < ema7 < ema25 < ema99 and r < 45:
+            return "DOWN"
+        return "SIDEWAYS"
+    except Exception as e:
+        log.info(f"analisa_trend_ringkas {symbol} {tf}: {e}")
+        return "SIDEWAYS"
+
 # ===================== STRATEGY ANALYZER =====================
 
 async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name: str, price: float, vol24h: float, tf_interval: str, market_trend: str) -> Optional[str]:
     try:
+        # Market regime gate: ketika BTC DOWN, hanya Jemput Bola yang diizinkan
         if market_trend == "DOWN" and strategy_name != "🔴 Jemput Bola":
             return None
 
@@ -296,10 +350,11 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
         highs = [float(k[2]) for k in data]
         lows = [float(k[3]) for k in data]
         volumes = [float(k[5]) for k in data]  # base volume per candle
+        trades = [int(k[8]) for k in data]     # number of trades per candle
 
-        # Volume filter konsisten: 24h + rata-rata TF
-        avg_tf_vol = sum(volumes[-20:]) / min(20, len(volumes)) if volumes else 0
-        if avg_tf_vol == 0:
+        # Liquidity guard
+        avg_tf_trades = sum(trades[-20:]) / min(20, len(trades)) if trades else 0
+        if avg_tf_trades < AVG_TRADES_MIN:
             return None
 
         # Indicators
@@ -309,6 +364,31 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
         ema25 = sum(closes[-25:]) / 25 if len(closes) >= 25 else sum(closes) / len(closes)
         ema99 = sum(closes[-99:]) / 99 if len(closes) >= 99 else sum(closes) / len(closes)
         atr14 = atr(highs, lows, closes, period=14)
+        atr_pct = (atr14 / price) * 100 if price > 0 else 0.0
+        plus_di, minus_di, adx_val = dmi_adx(highs, lows, closes, 14)
+
+        # Volatility regime for breakout
+        if strategy_name == "🟢 Scalping Breakout" and atr_pct < ATR_PCT_MIN_BREAKOUT:
+            return None
+        # ADX gate for all
+        if adx_val < ADX_MIN:
+            return None
+
+        # MTF confirmation (confirm with 1h for TF15; 4h for TF1h)
+        mtf_note = ""
+        if tf_interval == "15m":
+            htf = await analisa_trend_ringkas(client, symbol, "1h")
+            mtf_note = f" (1h TF {htf})"
+            if strategy_name == "🟢 Scalping Breakout" and htf != "UP":
+                return None
+            if strategy_name in ("🔴 Jemput Bola", "🟡 Rebound Swing") and htf == "UP":
+                # Hindari counter-trend kuat saat HTF UP
+                return None
+        elif tf_interval == "1h":
+            htf = await analisa_trend_ringkas(client, symbol, "4h")
+            mtf_note = f" (4h TF {htf})"
+            if strategy_name == "🟢 Scalping Breakout" and htf == "DOWN":
+                return None
 
         # Validasi strategi
         is_valid = False
@@ -317,11 +397,13 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
         elif strategy_name == "🟡 Rebound Swing":
             is_valid = (price < ema25) and (price > ema7) and (rsi_last < 50)
         elif strategy_name == "🟢 Scalping Breakout":
-            is_valid = (price > ema7 > 0) and (price > ema25) and (price > ema99) and (rsi_last >= 60)
+            # pastikan close > high N-1 untuk breakout sederhana
+            breakout_ok = closes[-1] > max(highs[-3:-1]) if len(highs) >= 3 else (price > ema7)
+            is_valid = (price > ema7 > 0) and (price > ema25) and (price > ema99) and (rsi_last >= 60) and breakout_ok
         if not is_valid:
             return None
 
-        # TP dinamis hybrid per strategi
+        # TP dinamis hybrid per strategi (tidak mengubah)
         tp_conf = {
             "🔴 Jemput Bola": {"mult": (1.8, 3.0), "min_pct": (0.007, 0.012)},
             "🟡 Rebound Swing": {"mult": (1.4, 2.4), "min_pct": (0.005, 0.009)},
@@ -339,38 +421,64 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
         tp2 = round(max(tp2_calc, tp2_floor), 6)
         tp1_pct = round((tp1 - price) / price * 100, 2)
         tp2_pct = round((tp2 - price) / price * 100, 2)
+        sl_atr = round(price - 1.2 * atr14, 6) if strategy_name != "🔴 Jemput Bola" else round(price - 0.8 * atr14, 6)
 
+        # Signals & context
+        rsi6_series = rsi_vals
         candle = detect_candle_pattern(opens, closes, highs, lows)
-        divergence = detect_divergence(closes[-len(rsi_vals):], rsi_vals) if rsi_vals else ""
+        divergence = detect_divergence(closes[-len(rsi6_series):], rsi6_series) if rsi6_series else ""
         zone = proximity_to_sr(closes, tf_interval)
         vol_spike = is_volume_spike(volumes)
         support_break = (price < 0.985 * ema25) and (price < 0.97 * ema7)
         trend = trend_strength(closes, volumes)
         macd_h = macd_histogram(closes)
 
-        score = sum([
-            bool(candle),
-            bool("Divergence" in divergence),
-            bool("Dekat" in zone),
-            bool(vol_spike),
-            not support_break,
-        ])
-        if score < 3:
+        # Weighted confidence score
+        score = 0.0
+        weights = {
+            "mtf": 1.5,
+            "adx": 1.2,
+            "atrpct": 0.8,
+            "div": 0.7,
+            "zone": 0.6,
+            "vol": 0.6,
+            "macd": 0.4,
+            "candle": 0.4,
+            "support_ok": 0.6,
+        }
+        # accumulate
+        score += weights["mtf"]  # sudah lolos gate MTF
+        if adx_val >= ADX_MIN: score += weights["adx"]
+        if strategy_name == "🟢 Scalping Breakout" and atr_pct >= ATR_PCT_MIN_BREAKOUT: score += weights["atrpct"]
+        if divergence: score += weights["div"]
+        if zone and ("Dekat" in zone): score += weights["zone"]
+        if vol_spike: score += weights["vol"]
+        if macd_h > 0: score += weights["macd"]
+        if candle: score += weights["candle"]
+        if not support_break: score += weights["support_ok"]
+
+        # Gate minimal skor (berbeda per strategi)
+        min_score = 3.5 if strategy_name == "🟢 Scalping Breakout" else 3.0
+        if score < min_score:
             return None
 
+        # Compose message
         msg = [
             f"{strategy_name} • {tf_interval}",
             f"✅ {symbol}",
             f"Harga: ${price:.6f}",
             f"EMA7: {ema7:.6f} | EMA25: {ema25:.6f} | EMA99: {ema99:.6f}",
-            f"RSI(6): {rsi_last} | ATR(14): {atr14:.6f}",
+            f"RSI(6): {rsi_last} | ATR(14): {atr14:.6f} (ATR%: {atr_pct:.2f}%)",
+            f"ADX(14): {adx_val:.2f}",
             f"📈 24h QuoteVol: ${vol24h:,.0f}",
-            f"📉 Avg TF Vol (base): {avg_tf_vol:,.2f}",
+            f"📉 Avg TF Vol (base): {sum(volumes[-20:]) / min(20, len(volumes)) if volumes else 0:,.2f}",
+            f"🧪 Avg Trades/Candle: {avg_tf_trades:,.0f}{mtf_note}",
             "",
             f"🎯 Entry: ${price:.6f}",
             f"🎯 TP1: ${tp1} (+{tp1_pct}%)",
             f"🎯 TP2: ${tp2} (+{tp2_pct}%)",
-            f"🎯 Confidence Score: {score}/5",
+            f"🛡️ SL (ATR): ${sl_atr}",
+            f"🎯 Confidence Score: {round(score, 2)}/{5}",
         ]
         if candle:
             msg.append(f"📌 Pattern: {candle}")
@@ -385,7 +493,8 @@ async def analisa_strategi_pro(client: BinanceClient, symbol: str, strategy_name
         msg.append(f"📊 Trend: {trend}")
         msg.append(f"🧬 MACD: {'Bullish' if macd_h > 0 else 'Bearish'} ({macd_h})")
 
-        return "\n".join(msg)
+        return "
+".join(msg)
     except Exception as e:
         log.warning(f"analisa_strategi_pro error {symbol} {tf_interval}: {e}")
         return None
@@ -406,7 +515,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_auth(update):
         return
     await update.message.reply_text(
-        "🤖 Selamat datang di Bot Sinyal Trading Crypto!\nPilih menu di bawah ini:",
+        "🤖 Selamat datang di Bot Sinyal Trading Crypto!
+Pilih menu di bawah ini:",
         reply_markup=ReplyKeyboardMarkup(WELCOME_KEYBOARD, resize_keyboard=True),
     )
 
@@ -431,7 +541,6 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if args:
         name = " ".join(args).strip()
-        # normalisasi ke salah satu key STRATEGIES dengan emoji (kalo user bukan dari tombol)
         matched = None
         for k in STRATEGIES.keys():
             if name.lower() in k.lower():
@@ -442,7 +551,6 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await run_scan(update, context, matched)
     else:
-        # tampilkan pilihan
         await update.message.reply_text("📊 Pilih Mode Strategi:", reply_markup=ReplyKeyboardMarkup(STRAT_KEYBOARD, resize_keyboard=True))
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -464,7 +572,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_name: str):
     await update.message.reply_text(
-        f"🔍 Memindai sinyal untuk strategi *{strategy_name}*...\nTunggu beberapa saat...",
+        f"🔍 Memindai sinyal untuk strategi *{strategy_name}*...
+Tunggu beberapa saat...",
         parse_mode="Markdown",
     )
 
@@ -475,11 +584,12 @@ async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_
         client = BinanceClient(session, http_sem)
         trend_btc = await btc_market_trend(client)
 
-        # prefetch price & 24h quote volume secara paralel
+        # prefetch price & 24h ticker secara paralel
         async def pv(pair: str):
             try:
-                p, v = await asyncio.gather(client.price(pair), client.quote_volume_24h(pair))
-                return pair, p, v
+                price, t24 = await asyncio.gather(client.price(pair), client.ticker24h(pair))
+                v_quote = float(t24["data"].get("quoteVolume", 0.0))
+                return pair, price, v_quote
             except Exception as e:
                 log.info(f"skip {pair}: {e}")
                 return pair, None, None
@@ -497,16 +607,14 @@ async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_
 
         async def analyze_pair(pair: str, price: float, vol24: float):
             nonlocal messages
-            # batasi analisa TF concurrent
             async with analysis_sem:
-                # bisa paralel per TF, tapi tetap dibatasi
                 tasks = [
                     analisa_strategi_pro(client, pair, strategy_name, price, vol24, tf, trend_btc)
                     for tf in TF_INTERVALS.values()
                 ]
                 out = await asyncio.gather(*tasks)
                 valid = [m for m in out if m]
-                if len(valid) >= 2:
+                if (len(valid) >= 2 if REQUIRE_2_TF else len(valid) >= 1):
                     messages.append(valid[0])
 
         await asyncio.gather(*(analyze_pair(pair, p, v) for pair, p, v in valid_pairs))

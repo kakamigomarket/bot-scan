@@ -440,16 +440,62 @@ async def run_scan(update: Update, context: ContextTypes.DEFAULT_TYPE, strategy_
         else:
             await context.bot.send_message(chat_id, "⚠️ Tidak ada sinyal layak saat ini. Coba di waktu lain.")
 
+import traceback
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    err = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))[:2000]
+    log.error(f"Unhandled error: {context.error}\n{err}")
+    try:
+        owner = ALLOWED_USERS[0] if ALLOWED_USERS else None
+        if owner:
+            await context.bot.send_message(owner, f"⚠️ Bot error:\n{err}")
+    except Exception:
+        pass
+
+async def log_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        kind = (
+            "callback_query" if update.callback_query else
+            "message" if update.message else
+            "other"
+        )
+        uid = update.effective_user.id if update.effective_user else "unknown"
+        log.info(f"UPDATE IN: kind={kind} from={uid}")
+    except Exception:
+        pass
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("pong ✅")
+
+async def post_startup(app):
+    me = await app.bot.get_me()
+    log.warning(f"BOT STARTED as @{me.username} (id={me.id})")
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=False)
+        log.info("Webhook deleted (polling mode confirmed).")
+    except Exception as e:
+        log.info(f"Delete webhook skip: {e}")
+    if ALLOWED_USERS:
+        try:
+            await app.bot.send_message(ALLOWED_USERS[0], f"✅ Bot @{me.username} aktif dan siap.")
+        except Exception as e:
+            log.info(f"Gagal kirim notifikasi start: {e}")
+
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(CommandHandler("scan", scan_command))
-    app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    log.info("Bot aktif dan berjalan...")
-    app.run_polling()
+    app.add_handler(CommandHandler("ping", ping))
 
-if __name__ == "__main__":
-    main()
+    app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.ALL, log_all), group=-1)  # log SEMUA update dulu
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    app.add_error_handler(on_error)
+
+    log.info("Booting bot…")
+    app.post_init = post_startup  # jalankan saat bot siap
+    app.run_polling()

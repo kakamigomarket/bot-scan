@@ -15,8 +15,8 @@ if not BOT_TOKEN:
 HTTP_CONCURRENCY = int(os.getenv("HTTP_CONCURRENCY", "12"))
 ANALYSIS_CONCURRENCY = int(os.getenv("ANALYSIS_CONCURRENCY", "8"))
 
-THRESHOLD_RETAIL = float(os.getenv("THRESHOLD_RETAIL", "2.4"))
-THRESHOLD_PRO    = float(os.getenv("THRESHOLD_PRO", "3.3"))
+THRESHOLD_RETAIL = float(os.getenv("THRESHOLD_RETAIL", "2.7"))
+THRESHOLD_PRO    = float(os.getenv("THRESHOLD_PRO", "3.7"))
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "90"))
 MAX_SIGNALS      = int(os.getenv("MAX_SIGNALS", "20"))
 
